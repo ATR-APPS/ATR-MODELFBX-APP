@@ -1,5 +1,3 @@
-// Escritor OBJ + MTL. Usa los mismos datos que fbx-writer.js (posiciones en centímetros).
-
 const MTL_KEYS = {
   diffuse: 'map_Kd',
   specular: 'map_Ks',
@@ -15,7 +13,7 @@ function num(v) {
 const clean = (s) => String(s).replace(/\s+/g, '_');
 
 export function writeOBJ({ meshes, materials, textures }, mtlFileName) {
-  const out = [`# Generado por GLB2FBX`, `mtllib ${mtlFileName}`, ''];
+  const out = [`# Generado por ATR MODELFBX`, `mtllib ${mtlFileName}`, ''];
   let vBase = 1;
   for (const m of meshes) {
     const n = m.positions.length / 3;
@@ -50,7 +48,7 @@ export function writeOBJ({ meshes, materials, textures }, mtlFileName) {
     out.push(lines.join('\n'), '');
   }
 
-  const mtl = ['# Generado por GLB2FBX', ''];
+  const mtl = ['# Generado por ATR MODELFBX', ''];
   for (const mat of materials) {
     const c = mat.color || [1, 1, 1];
     const e = mat.emissive || [0, 0, 0];

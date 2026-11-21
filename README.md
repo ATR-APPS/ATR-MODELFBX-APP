@@ -1,40 +1,44 @@
-# GLB → FBX
+# ATR MODELFBX
 
-Herramienta web para convertir modelos 3D a **FBX**, **OBJ** o **GLB** y extraer sus **texturas**, pensada para usarlos en 3ds Max. Todo se procesa en el navegador: los archivos no se suben a ningún servidor.
+Convierte modelos 3D a **FBX**, **OBJ** o **GLB**, extrae sus texturas y optimízalos. Todo se procesa en el navegador; los archivos no salen de tu equipo.
 
-## Entrada
+**Web:** https://atr-apps.github.io/ATR-MODELFBX-APP/
 
-- **GLB / glTF**: por ejemplo, las descargas de Sketchfab. El ZIP "glTF" de Sketchfab también funciona.
-- **FBX, OBJ (+ MTL), DAE, STL, PLY**.
-- Si las texturas vienen aparte, suéltalas junto al modelo o mete todo en un ZIP. Se encuentran por nombre de archivo, aunque el modelo tenga rutas absolutas como `C:\...\tex.png`.
+## Funciones
 
-## Salida
+- **Entrada:** GLB, glTF (también el ZIP de Sketchfab), FBX, OBJ + MTL, DAE, STL y PLY. Las texturas sueltas pueden ir junto al modelo o dentro de un ZIP.
+- **Salida:** FBX con los mapas conectados al material, OBJ + MTL, o GLB.
+- **Texturas:** extracción de los archivos originales y optimización opcional (potencia de 2 con tamaño máximo, o tamaño exacto, con compresión de alta calidad).
+- **Modelo:** limpieza de vértices duplicados y reducción de polígonos que conserva UVs y materiales.
 
-- **FBX**: mallas, normales, UVs y materiales, con los mapas ya conectados.
-  - Diffuse
-  - Normal
-  - Bump
-  - Emisivo
-  - Specular
-  - Opacidad: si el material tiene transparencia, se genera `*_opacity.png` a partir del canal alfa.
-- **OBJ + MTL**: la misma información, en un formato simple y universal.
-- **GLB**: un solo archivo. Es el único formato que conserva huesos y animaciones.
-- **Texturas**: se extraen sin cambios. Opcionalmente se optimizan:
-  - Tamaño en potencia de 2 con un máximo (por defecto 512 px), o un tamaño exacto.
-  - Compresión con calidad alta: JPG para las texturas opacas y PNG sin pérdida para las que tienen transparencia.
+## Desarrollo
 
-## Limitaciones
+```bash
+npm install
+npm run dev
+```
 
-- FBX y OBJ no llevan huesos ni animaciones: el modelo se exporta en su pose actual.
-- Las unidades se asumen según el formato: glTF y DAE en metros, FBX y OBJ en centímetros, STL en milímetros. Si el tamaño no cuadra, usa "Escala del modelo".
+## Publicación
 
-## Publicar en GitHub Pages
+```bash
+npm run deploy
+```
 
-1. Sube el contenido de esta carpeta a un repositorio.
-2. Ve a **Settings → Pages → Deploy from a branch**, elige `main` y `/ (root)`.
+Compila el proyecto y publica `dist/` en [ATR-MODELFBX-APP](https://github.com/ATR-APPS/ATR-MODELFBX-APP), que sirve la web con GitHub Pages.
 
-## Probar en local
+## Estructura
 
 ```
-npx serve .
+src/
+  main.js              interfaz y flujo principal
+  files.js             lectura de archivos y ZIP
+  utils.js
+  model/               carga de formatos y herramientas de malla
+  export/              escritores FBX y OBJ
+  textures/            procesamiento y optimización de imágenes
+  viewer/              visor 3D
+  ui/                  componentes de interfaz
+  styles/
+public/
+  draco/               decodificador Draco
 ```

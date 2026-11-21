@@ -1,13 +1,3 @@
-// Escritor FBX ASCII 7.4 (compatible con 3ds Max / FBX SDK).
-// Recibe datos "planos" para que sea independiente de three.js:
-//
-// meshes:    [{ name, positions: Float32Array (xyz), normals: Float32Array|null,
-//               uvs: Float32Array|null, flipV: bool (true si las UV vienen con origen arriba-izq, como glTF),
-//               indices: Uint32Array (triángulos), triMaterials: Int32Array (índice global de material por triángulo) }]
-// materials: [{ name, color:[r,g,b], opacity, emissive:[r,g,b],
-//               maps: { diffuse?, normal?, emissive?, opacity?, specular? } (índices a textures) }]
-// textures:  [{ name, file }]   file = ruta relativa al FBX, p.ej. "textures/Body_baseColor.png"
-
 const MAP_PROPERTY = {
   diffuse: 'DiffuseColor',
   normal: 'NormalMap',
@@ -37,12 +27,10 @@ function arrayBlock(name, values, isInt, ind) {
     for (let j = i; j < end; j++) parts[j - i] = isInt ? String(values[j]) : num(values[j]);
     lines.push(parts.join(','));
   }
-  // Como el FBX SDK de Autodesk: las líneas de continuación van sin sangría
   return `${ind}${name}: *${n} {\n${ind}\ta: ${lines.join(',\n')}\n${ind}} \n`;
 }
 
-// Las posiciones se escriben en centímetros (unidad nativa de FBX).
-export function writeFBX({ meshes, materials, textures }, { creator = 'GLB2FBX' } = {}) {
+export function writeFBX({ meshes, materials, textures }, { creator = 'ATR MODELFBX' } = {}) {
   let nextId = 1000000;
   const id = () => nextId++;
   const out = [];
@@ -52,7 +40,6 @@ export function writeFBX({ meshes, materials, textures }, { creator = 'GLB2FBX' 
   const texIds = textures.map(() => id());
   const vidIds = textures.map(() => id());
 
-  // ---------- Header ----------
   const now = new Date();
   out.push(`; FBX 7.4.0 project file
 ; ----------------------------------------------------
@@ -114,7 +101,6 @@ Definitions:  {
 Objects:  {
 `);
 
-  // ---------- Meshes ----------
   for (const m of meshes) {
     const geoId = id();
     const modelId = id();
@@ -122,7 +108,6 @@ Objects:  {
     const idx = m.indices;
     const triCount = idx.length / 3;
 
-    // Materiales locales de este mesh (orden = orden de conexión)
     const localOf = new Map();
     const localMats = [];
     const triMatLocal = new Int32Array(triCount);
@@ -162,7 +147,7 @@ Objects:  {
       const uv = new Float32Array(m.uvs.length);
       for (let i = 0; i < uv.length; i += 2) {
         uv[i] = m.uvs[i];
-        uv[i + 1] = m.flipV ? 1 - m.uvs[i + 1] : m.uvs[i + 1]; // FBX usa V hacia arriba
+        uv[i + 1] = m.flipV ? 1 - m.uvs[i + 1] : m.uvs[i + 1];
       }
       s += `\t\tLayerElementUV: 0 {\n\t\t\tVersion: 101\n\t\t\tName: "UVChannel_1"\n\t\t\tMappingInformationType: "ByPolygonVertex"\n\t\t\tReferenceInformationType: "IndexToDirect"\n`;
       s += arrayBlock('UV', uv, false, '\t\t\t');
@@ -199,7 +184,6 @@ Objects:  {
     for (const g of localMats) conns.push(`\tC: "OO",${matIds[g]},${modelId}`);
   }
 
-  // ---------- Materials ----------
   materials.forEach((mat, i) => {
     const c = mat.color || [1, 1, 1];
     const e = mat.emissive || [0, 0, 0];
@@ -230,7 +214,6 @@ Objects:  {
     }
   });
 
-  // ---------- Textures / Videos ----------
   textures.forEach((tex, i) => {
     const name = str(tex.name);
     const file = str(tex.file);

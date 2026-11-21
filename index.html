@@ -3,47 +3,39 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GLB a FBX</title>
-  <meta name="description" content="Convierte modelos GLB/glTF (p. ej. de Sketchfab) a FBX y extrae sus texturas para 3ds Max. Todo ocurre en tu navegador.">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%234f8cff' d='M12 2 3 7v10l9 5 9-5V7z'/></svg>">
+  <meta name="theme-color" content="#000000">
+  <title>ATR MODELFBX</title>
+  <meta name="description" content="Convierte modelos 3D a FBX, OBJ o GLB, extrae sus texturas y optimízalos. Todo ocurre en tu navegador.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%23ffffff' d='M12 2 3 7v10l9 5 9-5V7z'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/1.0.11/pako.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/upng-js/2.1.0/UPNG.min.js"></script>
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-      "jszip": "https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm",
-      "meshopt-simplifier": "https://cdn.jsdelivr.net/npm/meshoptimizer@0.22.0/meshopt_simplifier.module.js"
-    }
-  }
-  </script>
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M3 7l9 5 9-5M12 12v10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
-      <span>GLB → FBX</span>
+      <span>ATR MODELFBX</span>
     </div>
-    <p class="tagline">Convierte modelos a FBX, OBJ o GLB y extrae sus texturas. Nada se sube: todo se procesa en tu navegador.</p>
+    <a class="gh-link" href="https://github.com/ATR-APPS/ATR-MODELFBX-APP" target="_blank" rel="noopener" title="Ver en GitHub" aria-label="Ver en GitHub">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      <span id="gh-stars" class="gh-stars" hidden>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" d="M8 1.5l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.3l-3.8 2 .7-4.3-3.1-3 4.3-.6z"/></svg>
+        <span id="gh-count"></span>
+      </span>
+    </a>
   </header>
 
   <main>
-    <section id="drop" class="dropbar" title="Suelta aquí tu modelo o haz clic para elegir">
+    <section id="drop" class="dropbar">
       <input id="file" type="file" multiple accept=".glb,.gltf,.bin,.fbx,.obj,.mtl,.dae,.stl,.ply,.zip,.png,.jpg,.jpeg,.webp,.tga,.bmp,.tif,.tiff,.dds" hidden>
-      <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      <div class="drop-text">
-        <strong id="drop-title">Suelta aquí tu modelo 3D o <button id="pick" class="link">elige archivos</button></strong>
-        <span class="muted">GLB · glTF · FBX · OBJ · DAE · STL · PLY · ZIP — las texturas sueltas también</span>
-      </div>
-      <div id="file-chip" class="file-chip" hidden>
-        <span class="label">Archivo</span>
+      <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4m0 0-4 4m4-4 4 4M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span id="drop-title" class="drop-title">Arrastra tu modelo aquí</span>
+      <span id="file-chip" class="file-chip" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M3 7l9 5 9-5M12 12v10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
         <span id="fname" class="fname"></span>
-      </div>
-      <button id="another" class="btn" hidden>Cambiar</button>
+      </span>
+      <span id="formats" class="formats"><span>GLB</span><span>FBX</span><span>OBJ</span><span>DAE</span><span>STL</span><span>PLY</span><span>ZIP</span></span>
+      <button id="pick" class="btn">Elegir archivos</button>
     </section>
 
     <section id="work" class="work">
@@ -59,95 +51,89 @@
           <button id="fit" class="tool" title="Centrar vista">Centrar</button>
         </div>
         <div id="viewer-info" class="viewer-info" hidden></div>
-        <div class="viewer-hint">Arrastrar: rotar · Clic derecho: mover · Rueda: zoom</div>
       </div>
 
       <aside class="panel">
-        <p id="panel-empty" class="panel-empty">Carga un modelo para ver sus datos, texturas y opciones de exportación.</p>
+        <div class="panel-scroll">
+        <div id="panel-empty" class="panel-empty">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="16" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="10" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="18" cy="18" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+          <p>Carga un modelo para ver sus datos, texturas y opciones de exportación</p>
+        </div>
         <div id="panel-body" class="panel-body" hidden>
         <dl id="stats" class="stats"></dl>
 
-        <div class="opts">
-          <label>¿Optimizar modelo?</label>
-          <div class="seg two" id="model-opt" role="radiogroup">
-            <button data-v="no" class="on">No</button>
-            <button data-v="yes">Sí</button>
-          </div>
-          <div id="model-yes" class="optbox" hidden>
-            <div class="sub slider-row">
+        <section class="group">
+          <h3 class="group-title">Modelo</h3>
+          <label class="row">
+            <span>Reducir polígonos</span>
+            <input id="model-toggle" type="checkbox" class="switch">
+          </label>
+          <div id="model-yes" class="row-sub" hidden>
+            <div class="slider-row">
               <input id="ratio" type="range" min="5" max="95" step="5" value="50" aria-label="Porcentaje de triángulos">
               <span id="ratio-val" class="ratio-val">50%</span>
             </div>
             <p id="model-result" class="result"></p>
-            <p class="hint">Reduce los polígonos conservando la forma, las UVs y los materiales. Activa «Ver malla» en la vista 3D para comparar. Hasta 50% casi no se nota.</p>
           </div>
-        </div>
+        </section>
 
-        <div class="opts">
-          <label>¿Optimizar texturas?</label>
-          <div class="seg two" id="optimize" role="radiogroup">
-            <button data-v="no">No</button>
-            <button data-v="yes" class="on">Sí</button>
-          </div>
-
-          <div id="opt-yes" class="optbox">
-            <div class="sub">
-              <span>Tamaño</span>
+        <section class="group">
+          <h3 class="group-title">Texturas</h3>
+          <label class="row">
+            <span>Optimizar</span>
+            <input id="tex-toggle" type="checkbox" class="switch" checked>
+          </label>
+          <div id="opt-yes" class="row-sub">
+            <div class="row">
+              <span>Tamaño máximo</span>
               <select id="size-sel">
-                <option value="128">Máximo 128 px</option>
-                <option value="256">Máximo 256 px</option>
-                <option value="512" selected>Máximo 512 px</option>
-                <option value="1024">Máximo 1024 px</option>
-                <option value="2048">Máximo 2048 px</option>
-                <option value="exact">Tamaño exacto…</option>
+                <option value="128">128 px</option>
+                <option value="256">256 px</option>
+                <option value="512" selected>512 px</option>
+                <option value="1024">1024 px</option>
+                <option value="2048">2048 px</option>
+                <option value="exact">Exacto</option>
               </select>
             </div>
-            <div id="exact-opts" class="sub" hidden>
-              <input id="exact-w" type="number" value="512" min="1" max="8192" step="1" aria-label="Ancho">
-              <span class="muted">×</span>
-              <input id="exact-h" type="number" value="512" min="1" max="8192" step="1" aria-label="Alto">
-              <span class="muted">px</span>
+            <div id="exact-opts" class="row" hidden>
+              <span>Ancho × alto</span>
+              <span class="wh">
+                <input id="exact-w" class="num" type="number" value="512" min="1" max="8192" step="1" aria-label="Ancho">
+                <span class="muted">×</span>
+                <input id="exact-h" class="num" type="number" value="512" min="1" max="8192" step="1" aria-label="Alto">
+              </span>
             </div>
-            <p id="opt-hint" class="hint">Se reduce al tamaño más cercano (128, 256, 512…) sin pasar del máximo, y se comprime para que pese menos sin perder calidad visible.</p>
           </div>
-          <p id="opt-no" class="hint" hidden>Las texturas se descargan tal cual vienen en el modelo.</p>
-        </div>
+        </section>
 
-        <div class="opts">
-          <label>Formato de salida</label>
+        <section class="group">
+          <h3 class="group-title">Exportar</h3>
           <div class="seg" id="out-fmt" role="radiogroup">
             <button data-f="fbx" class="on">FBX</button>
             <button data-f="obj">OBJ</button>
             <button data-f="glb">GLB</button>
           </div>
-          <p id="fmt-hint" class="hint"></p>
-        </div>
-
-        <div class="actions">
-          <button id="dl-zip" class="btn primary">Descargar ZIP (FBX + texturas)</button>
-          <div class="actions-row">
-            <button id="dl-model" class="btn">Solo FBX</button>
-            <button id="dl-tex" class="btn">Solo texturas</button>
+          <div class="actions">
+            <button id="dl-zip" class="btn primary">Descargar</button>
+            <div class="actions-row">
+              <button id="dl-model" class="btn">Solo FBX</button>
+              <button id="dl-tex" class="btn">Solo texturas</button>
+            </div>
           </div>
-        </div>
+        </section>
 
         <ul id="warnings" class="warnings"></ul>
 
-        <details class="adv">
-          <summary>Escala del modelo (opcional)</summary>
-          <div class="scale-row">
-            <input id="scale" type="number" value="1" min="0.0001" step="any">
-            <span class="muted">Déjalo en 1. Cámbialo solo si en Max sale muy grande o muy pequeño.</span>
-          </div>
-        </details>
-
-        <h2>Texturas <span id="tex-count" class="muted"></span></h2>
+        <section class="group">
+          <h3 class="group-title group-split"><span>Archivos de textura <span id="tex-count" class="count"></span></span><span id="tex-total" class="total"></span></h3>
         <div id="textures" class="textures"></div>
+        </section>
+        </div>
         </div>
       </aside>
     </section>
   </main>
 
-  <script type="module" src="app.js"></script>
+  <script type="module" src="/src/main.js"></script>
 </body>
 </html>

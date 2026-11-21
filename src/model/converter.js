@@ -1,5 +1,3 @@
-// Carga modelos (GLB, glTF, FBX, OBJ, DAE, STL, PLY) y prepara la exportación:
-// mallas horneadas, materiales, texturas originales extraídas, FBX y OBJ.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
@@ -12,13 +10,10 @@ import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 import { TGALoader } from 'three/addons/loaders/TGALoader.js';
 import { DDSLoader } from 'three/addons/loaders/DDSLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { writeFBX } from './fbx-writer.js';
-import { writeOBJ } from './obj-writer.js';
+import { writeFBX } from '../export/fbx-writer.js';
+import { writeOBJ } from '../export/obj-writer.js';
 import { weldMesh } from './mesh-tools.js';
 
-const THREE_VERSION = '0.160.0';
-
-// Prioridad al elegir el archivo principal entre varios
 export const MODEL_EXTS = ['glb', 'gltf', 'fbx', 'obj', 'dae', 'stl', 'ply'];
 
 const MIME_BY_EXT = {
@@ -30,17 +25,14 @@ const EXT_BY_MIME = {
   'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/ktx2': 'ktx2',
   'image/x-tga': 'tga', 'image/bmp': 'bmp', 'image/tiff': 'tif', 'image/vnd-ms.dds': 'dds', 'image/avif': 'avif',
 };
-// Formatos que 3ds Max abre sin problema
 const MAX_FRIENDLY = new Set(['png', 'jpg', 'tga', 'bmp', 'tif', 'dds']);
-// Formatos que el navegador decodifica y conviene pasar a PNG
 const TO_PNG = new Set(['webp', 'gif', 'avif']);
 
 export const extOf = (name) => (/\.([^./\\]+)$/.exec(name)?.[1] || '').toLowerCase();
 const stripExt = (name) => name.replace(/\.[^./\\]+$/, '');
-// Nombre de archivo sin carpeta, conservando mayúsculas
 export function baseOf(path) {
   let p = String(path);
-  try { p = decodeURIComponent(p); } catch { /* ya decodificada */ }
+  try { p = decodeURIComponent(p); } catch {}
   return p.replace(/[?#].*$/, '').replace(/\\/g, '/').split('/').pop();
 }
 export const keyOf = (path) => baseOf(path).toLowerCase();
@@ -70,7 +62,7 @@ function decodeDataUri(uri) {
 
 export function sanitizeName(s, fallback = 'item') {
   const clean = String(s || '')
-    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^A-Za-z0-9_\-.]+/g, '_')
     .replace(/^[_.]+|[_.]+$/g, '')
     .slice(0, 80);
@@ -89,7 +81,6 @@ function uniqueNamer() {
 
 const toArrayBuffer = (u8) => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
 
-// ---------- glTF: lectura del contenedor ----------
 function readContainer(buffer) {
   const dv = new DataView(buffer);
   if (buffer.byteLength >= 12 && dv.getUint32(0, true) === 0x46546c67) {
@@ -173,9 +164,7 @@ function gltfMaterial(json, def, gi) {
   };
 }
 
-// ---------- Carga de cualquier formato ----------
-// files: [{ name, bytes: Uint8Array }] (ya descomprimidos si venían en ZIP)
-export async function loadInput(files, { onStatus = () => {} } = {}) {
+export async function loadInput(files, { dracoPath, onStatus = () => {} } = {}) {
   const fileMap = new Map();
   for (const f of files) if (!fileMap.has(keyOf(f.name))) fileMap.set(keyOf(f.name), f);
 
@@ -186,7 +175,6 @@ export async function loadInput(files, { onStatus = () => {} } = {}) {
   const ext = extOf(main.name);
   const warnings = new Set();
 
-  // Resuelve rutas de texturas/buffers hacia los archivos que subió el usuario
   const blobUrls = new Map();
   const blobToFile = new Map();
   const manager = new THREE.LoadingManager();
@@ -205,7 +193,6 @@ export async function loadInput(files, { onStatus = () => {} } = {}) {
     }
     return u;
   });
-  // TGA/DDS: recordamos el archivo original para extraerlo tal cual
   const track = (Base) => class extends Base {
     load(url, ...rest) {
       const tex = super.load(url, ...rest);
@@ -233,7 +220,7 @@ export async function loadInput(files, { onStatus = () => {} } = {}) {
   if (ext === 'glb' || ext === 'gltf') {
     const loader = new GLTFLoader(manager);
     const draco = new DRACOLoader(manager);
-    draco.setDecoderPath(`https://cdn.jsdelivr.net/npm/three@${THREE_VERSION}/examples/jsm/libs/draco/gltf/`);
+    if (dracoPath) draco.setDecoderPath(dracoPath);
     loader.setDRACOLoader(draco);
     loader.setMeshoptDecoder(MeshoptDecoder);
     try {
@@ -264,7 +251,7 @@ export async function loadInput(files, { onStatus = () => {} } = {}) {
     const group = new THREE.Group();
     group.add(Object.assign(new THREE.Mesh(geo, mat), { name: sanitizeName(stripExt(baseOf(main.name)), 'Mesh') }));
     result.scene = group;
-    if (ext === 'stl') result.unitToCm = 0.1; // STL suele venir en milímetros
+    if (ext === 'stl') result.unitToCm = 0.1;
   }
 
   onStatus('Cargando texturas…');
@@ -274,7 +261,6 @@ export async function loadInput(files, { onStatus = () => {} } = {}) {
   return result;
 }
 
-// ---------- Geometría ----------
 function bakeMesh(mesh, factor) {
   const geo = mesh.geometry;
   const pos = geo.attributes.position;
@@ -291,7 +277,7 @@ function bakeMesh(mesh, factor) {
   const v = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
 
   for (let i = 0; i < n; i++) {
-    if (skinned || hasMorph) mesh.getVertexPosition(i, v); // aplica morphs + pose del esqueleto
+    if (skinned || hasMorph) mesh.getVertexPosition(i, v);
     else v.fromBufferAttribute(pos, i);
     v.applyMatrix4(world).multiplyScalar(factor);
     positions[i * 3] = v.x; positions[i * 3 + 1] = v.y; positions[i * 3 + 2] = v.z;
@@ -372,23 +358,19 @@ function mergeParts(parts) {
   return { positions, normals, uvs, indices, triMaterials };
 }
 
-// Mapas de un material three.js (formatos que no son glTF)
 const THREE_ROLES = {
   map: 'baseColor', normalMap: 'normal', bumpMap: 'bump', emissiveMap: 'emissive', specularMap: 'specular',
   alphaMap: 'opacity', aoMap: 'occlusion', roughnessMap: 'roughness', metalnessMap: 'metalness',
 };
 
-// ---------- Preparar exportación ----------
-// imageTools (navegador): toPNG(bytes, mime), alphaToPNG(bytes, mime), textureToPNG(texture)
-export async function buildExport(loaded, { scale = 1, imageTools, onStatus = () => {} } = {}) {
+export async function buildExport(loaded, { imageTools, onStatus = () => {} } = {}) {
   const warnings = new Set(loaded.warnings);
   const scene = loaded.scene;
   scene.updateMatrixWorld(true);
-  const factor = loaded.unitToCm * scale;
+  const factor = loaded.unitToCm;
   const isGltf = !!loaded.gltf;
 
-  // --- Imágenes (por clave) ---
-  const imageMap = new Map(); // key -> { key, hint, uses: [], load: async () => {bytes, mime} }
+  const imageMap = new Map();
   if (isGltf) {
     const { json, bin } = loaded.container;
     for (const img of gltfImages(json, bin, loaded.files, warnings)) {
@@ -407,7 +389,7 @@ export async function buildExport(loaded, { scale = 1, imageTools, onStatus = ()
           const src = tex.image?.src;
           if (src?.startsWith('data:')) { const d = decodeDataUri(src); if (d) return { bytes: d.bytes, mime: mimeFor(d.bytes) }; }
           if (src?.startsWith('blob:')) {
-            try { const bytes = new Uint8Array(await (await fetch(src)).arrayBuffer()); return { bytes, mime: mimeFor(bytes) }; } catch { /* sigue */ }
+            try { const bytes = new Uint8Array(await (await fetch(src)).arrayBuffer()); return { bytes, mime: mimeFor(bytes) }; } catch {}
           }
           if (imageTools?.textureToPNG) {
             const bytes = await imageTools.textureToPNG(tex).catch(() => null);
@@ -420,11 +402,10 @@ export async function buildExport(loaded, { scale = 1, imageTools, onStatus = ()
     return key;
   };
 
-  // --- Materiales ---
   const matNamer = uniqueNamer();
-  const materials = []; // { name, color, opacity, emissive, alphaMode, roles: {role: imageKey} }
+  const materials = [];
   const matIndexByKey = new Map();
-  const threeMaterials = []; // material three.js por índice (para la vista previa)
+  const threeMaterials = [];
   const gltfMats = isGltf ? (loaded.container.json.materials || []).map((d, i) => gltfMaterial(loaded.container.json, d, i)) : [];
 
   function materialIndexFor(threeMat) {
@@ -457,7 +438,6 @@ export async function buildExport(loaded, { scale = 1, imageTools, onStatus = ()
     return idx;
   }
 
-  // --- Mallas ---
   onStatus('Procesando geometría…');
   const objs = [];
   scene.traverse((o) => { if (o.isMesh && o.geometry?.attributes?.position) objs.push(o); });
@@ -465,7 +445,6 @@ export async function buildExport(loaded, { scale = 1, imageTools, onStatus = ()
   if (objs.some((o) => o.isSkinnedMesh)) warnings.add('El modelo tiene esqueleto: se exporta en su pose actual, sin huesos ni skinning.');
   if (loaded.animations?.length) warnings.add(`Se ignoraron ${loaded.animations.length} animación(es) (se conservan solo al exportar a GLB).`);
 
-  // Las primitivas de una misma malla glTF se unen en un solo objeto (multi-material)
   const buckets = new Map();
   for (const o of objs) {
     const assoc = isGltf ? loaded.gltf.parser.associations.get(o) : null;
@@ -488,17 +467,15 @@ export async function buildExport(loaded, { scale = 1, imageTools, onStatus = ()
     triangles += mesh.indices.length / 3;
   }
 
-  // --- Usos de cada imagen ---
   for (const m of materials) for (const [role, key] of Object.entries(m.roles)) imageMap.get(key)?.uses.push({ mat: m.name, role });
   for (const g of gltfMats) for (const [role, key] of Object.entries(g.roles)) {
     const im = imageMap.get(key);
     if (im && !im.uses.length) im.uses.push({ mat: g.name, role });
   }
 
-  // --- Extraer imágenes ---
   onStatus('Extrayendo texturas…');
   const fileNamer = uniqueNamer();
-  const outImages = []; // { name, file, bytes, mime, roles }
+  const outImages = [];
   const entryByKey = new Map();
   for (const im of imageMap.values()) {
     const got = await im.load();
@@ -518,7 +495,6 @@ export async function buildExport(loaded, { scale = 1, imageTools, onStatus = ()
     entryByKey.set(im.key, entry);
   }
 
-  // --- Opacidad: canal alfa del color base como mapa en escala de grises ---
   const opacityByKey = new Map();
   if (imageTools) {
     for (const m of materials) {
@@ -531,15 +507,14 @@ export async function buildExport(loaded, { scale = 1, imageTools, onStatus = ()
         const alpha = await imageTools.alphaToPNG(entry.bytes, entry.mime);
         if (alpha) {
           const name = fileNamer(`${entry.name}_opacity`);
-          const op = { name, file: `${name}.png`, bytes: alpha, mime: 'image/png', roles: ['opacity'], generated: true };
+          const op = { name, file: `${name}.png`, bytes: alpha, mime: 'image/png', roles: ['opacity'] };
           outImages.push(op);
           opacityByKey.set(key, op);
         }
-      } catch { /* sin alfa legible */ }
+      } catch {}
     }
   }
 
-  // --- Texturas para FBX/OBJ y conexión a materiales ---
   const fileTextures = [];
   const texIndex = new Map();
   const tIdx = (entry) => {
@@ -561,7 +536,7 @@ export async function buildExport(loaded, { scale = 1, imageTools, onStatus = ()
     for (const k of Object.keys(maps)) if (maps[k] == null) delete maps[k];
     return {
       name: m.name,
-      color: maps.diffuse != null ? [1, 1, 1] : m.color, // que el mapa no se tiña
+      color: maps.diffuse != null ? [1, 1, 1] : m.color,
       emissive: maps.emissive != null ? [1, 1, 1] : m.emissive,
       opacity: m.opacity,
       maps,
@@ -584,7 +559,6 @@ export async function buildExport(loaded, { scale = 1, imageTools, onStatus = ()
   };
 }
 
-// Escribe FBX y OBJ con las mallas indicadas (originales u optimizadas)
 export function writeModel(data, meshes, baseName) {
   const d = { ...data, meshes };
   return { fbx: writeFBX(d), ...writeOBJ(d, `${baseName}.mtl`) };

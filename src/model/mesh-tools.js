@@ -1,7 +1,3 @@
-// Herramientas de malla: limpieza (unir vértices duplicados) y reducción de polígonos.
-// Formato de malla: { name, flipV, positions, normals|null, uvs|null, indices: Uint32Array, triMaterials: Int32Array }
-
-// Une vértices idénticos (misma posición, normal y UV). No cambia el aspecto del modelo.
 export function weldMesh(m) {
   const n = m.positions.length / 3;
   const map = new Map();
@@ -22,7 +18,6 @@ export function weldMesh(m) {
   return dropDegenerate({ ...m, ...gather(m, keep), indices });
 }
 
-// Copia los atributos de los vértices indicados
 function gather(m, keep) {
   const k = keep.length;
   const positions = new Float32Array(k * 3);
@@ -37,7 +32,6 @@ function gather(m, keep) {
   return { positions, normals, uvs };
 }
 
-// Quita triángulos degenerados (dos vértices iguales)
 function dropDegenerate(m) {
   const idx = m.indices;
   const tri = idx.length / 3;
@@ -59,7 +53,6 @@ function dropDegenerate(m) {
   return { ...m, indices, triMaterials };
 }
 
-// Elimina vértices que ya no usa ningún triángulo
 function compact(m) {
   const n = m.positions.length / 3;
   const remap = new Int32Array(n).fill(-1);
@@ -76,15 +69,13 @@ function compact(m) {
 let simplifier = null;
 async function getSimplifier() {
   if (!simplifier) {
-    const { MeshoptSimplifier } = await import('meshopt-simplifier');
+    const { MeshoptSimplifier } = await import('meshoptimizer/meshopt_simplifier.module.js');
     await MeshoptSimplifier.ready;
     simplifier = MeshoptSimplifier;
   }
   return simplifier;
 }
 
-// Reduce los triángulos de cada malla al porcentaje indicado (ratio 0–1).
-// Cada material se simplifica por separado para que no se mezclen; los bordes entre materiales se bloquean.
 export async function simplifyMeshes(meshes, ratio) {
   if (ratio >= 1) return meshes;
   const S = await getSimplifier();
