@@ -1,55 +1,55 @@
 # ATR MODELFBX
 
-Convierte modelos 3D a **FBX**, **OBJ** o **GLB**, extrae sus texturas y optimízalos. Todo se procesa en el navegador; los archivos no salen de tu equipo.
+Convert 3D models to **FBX**, **OBJ** or **GLB**, extract their textures and optimize them. Everything runs in the browser; your files never leave your computer.
 
-**Web:** https://atr-apps.github.io/ATR-MODELFBX-APP/
+**Live app:** https://atr-apps.github.io/ATR-MODELFBX-APP/
 
-## Funciones
+## Features
 
-- **Entrada:** GLB, glTF (también el ZIP de Sketchfab), FBX, OBJ + MTL, DAE, STL y PLY. Las texturas sueltas pueden ir junto al modelo o dentro de un ZIP.
-- **Salida:** FBX con los mapas conectados al material, OBJ + MTL, o GLB.
-- **Texturas:** extracción de los archivos originales y optimización opcional (potencia de 2 con tamaño máximo, o tamaño exacto, con compresión de alta calidad).
-- **Modelo:** limpieza de vértices duplicados y reducción de polígonos que conserva UVs y materiales.
+- **Input:** GLB, glTF (including Sketchfab's ZIP download), FBX, OBJ + MTL, DAE, STL and PLY. Loose textures can be dropped next to the model or packed in a ZIP.
+- **Output:** FBX with texture maps already connected to the materials, OBJ + MTL, or GLB.
+- **Textures:** extracts the original image files, with optional optimization (power-of-two sizes with a maximum, or an exact size, plus high-quality compression).
+- **Model:** removes duplicate vertices and reduces polygons while preserving UVs and materials.
 
-## Desarrollo
+## Development
 
 ```bash
 npm install
 npm run dev
 ```
 
-## Publicación
+## Deployment
 
-Cada push a `main` compila el proyecto y publica la web en GitHub Pages automáticamente.
+Every push to `main` builds the project and publishes it to GitHub Pages automatically.
 
-## Contribuir
+## Contributing
 
-Las mejoras son bienvenidas.
+Contributions are welcome.
 
-1. Haz un fork del repositorio y crea una rama para tu cambio.
-2. Instala las dependencias con `npm install` y prueba con `npm run dev`.
-3. Comprueba que `npm run build` funciona.
-4. Abre un pull request explicando qué cambia y por qué.
+1. Fork the repository and create a branch for your change.
+2. Install the dependencies with `npm install` and test with `npm run dev`.
+3. Make sure `npm run build` succeeds.
+4. Open a pull request describing what changes and why.
 
-Para errores o ideas, abre un [issue](https://github.com/ATR-APPS/ATR-MODELFBX-APP/issues).
+For bugs or ideas, open an [issue](https://github.com/ATR-APPS/ATR-MODELFBX-APP/issues).
 
-## Estructura
+## Project structure
 
 ```
 src/
-  main.js              interfaz y flujo principal
-  files.js             lectura de archivos y ZIP
+  main.js              UI and main flow
+  files.js             file and ZIP reading
   utils.js
-  model/               carga de formatos y herramientas de malla
-  export/              escritores FBX y OBJ
-  textures/            procesamiento y optimización de imágenes
-  viewer/              visor 3D
-  ui/                  componentes de interfaz
+  model/               format loaders and mesh tools
+  export/              FBX and OBJ writers
+  textures/            image processing and optimization
+  viewer/              3D viewer
+  ui/                  UI components
   styles/
 public/
-  draco/               decodificador Draco
+  draco/               Draco decoder
 ```
 
-## Licencia
+## License
 
 [MIT](LICENSE)
