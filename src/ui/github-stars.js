@@ -1,3 +1,5 @@
+import { formatInt } from '../utils.js';
+
 const CACHE_TIME = 60 * 60 * 1000;
 
 function readCache(key) {
@@ -17,7 +19,7 @@ function writeCache(key, count) {
 export async function showGithubStars(repo, { badge, counter }) {
   const key = `stars:${repo}`;
   const show = (count) => {
-    counter.textContent = Number(count).toLocaleString('es');
+    counter.textContent = formatInt(count);
     badge.hidden = false;
   };
 

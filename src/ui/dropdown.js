@@ -63,4 +63,5 @@ export function createDropdown(select) {
   });
   select.addEventListener('change', render);
   render();
+  return { render };
 }

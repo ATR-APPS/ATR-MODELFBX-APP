@@ -10,28 +10,15 @@ import { Viewer, meshesToGroup } from './viewer/viewer.js';
 import { createDropdown } from './ui/dropdown.js';
 import { showGithubStars } from './ui/github-stars.js';
 import { containsModel, readFiles, buildZip } from './files.js';
+import { t, getLanguage, setLanguage, onLanguageChange, applyTranslations, describeError } from './i18n.js';
 import { $, formatInt, formatBytes, download } from './utils.js';
 
 const DRACO_PATH = `${import.meta.env.BASE_URL}draco/`;
 
-const ROLE_LABELS = {
-  baseColor: 'Diffuse',
-  normal: 'Normal',
-  bump: 'Bump',
-  emissive: 'Emisivo',
-  occlusion: 'AO',
-  metallicRoughness: 'Metal/Rough',
-  specularGlossiness: 'Spec/Gloss',
-  specular: 'Specular',
-  roughness: 'Roughness',
-  metalness: 'Metalness',
-  opacity: 'Opacidad',
-};
-
 const FORMATS = {
-  fbx: { main: 'Descargar FBX + texturas', model: 'Solo FBX' },
-  obj: { main: 'Descargar OBJ + texturas', model: 'Solo OBJ + MTL' },
-  glb: { main: 'Descargar GLB', model: '' },
+  fbx: { main: 'download.fbx', model: 'download.fbxOnly' },
+  obj: { main: 'download.obj', model: 'download.objOnly' },
+  glb: { main: 'download.glb', model: null },
 };
 
 const downloadIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -48,12 +35,14 @@ const ui = {
   textures: $('textures'),
   textureCount: $('tex-count'),
   textureTotal: $('tex-total'),
+  modelResult: $('model-result'),
   downloadMain: $('dl-zip'),
   downloadModel: $('dl-model'),
   downloadTextures: $('dl-tex'),
 };
 
 const viewer = new Viewer($('viewer'));
+const sizeDropdown = createDropdown($('size-sel'));
 
 const state = {
   input: null,
@@ -62,6 +51,7 @@ const state = {
   reduce: false,
   ratio: 0.5,
   reduced: null,
+  reduction: null,
   thumbnails: [],
 };
 
@@ -70,14 +60,9 @@ let estimateJob = 0;
 let estimateTimer = 0;
 let ratioTimer = 0;
 
-function setStatus(text) {
-  ui.status.hidden = !text;
-  ui.status.textContent = text || '';
-}
-
-function setViewerInfo(text) {
-  ui.viewerInfo.hidden = !text;
-  ui.viewerInfo.textContent = text || '';
+function setStatus(key) {
+  ui.status.hidden = !key;
+  ui.status.textContent = key ? t(key) : '';
 }
 
 function setBusy(busy) {
@@ -86,29 +71,54 @@ function setBusy(busy) {
 
 function showError(error) {
   console.error(error);
-  alert(`Error: ${error.message || error}`);
+  alert(t('error.prefix', { message: describeError(error) }));
+}
+
+function renderViewerInfo() {
+  const { result, reduction } = state;
+  ui.viewerInfo.hidden = !result;
+  if (!result) return;
+  ui.viewerInfo.textContent = reduction
+    ? t('viewer.optimized', { after: formatInt(reduction.after), before: formatInt(reduction.before) })
+    : t('viewer.triangles', { count: formatInt(result.stats.triangles) });
+}
+
+function renderReduction() {
+  const { reduction } = state;
+  if (!reduction) return;
+  const percent = Math.round((1 - reduction.after / reduction.before) * 100);
+  ui.modelResult.innerHTML = t('model.result', {
+    before: formatInt(reduction.before),
+    after: formatInt(reduction.after),
+    percent,
+  });
 }
 
 function renderStats({ stats }) {
   const items = [
-    ['Mallas', stats.meshes],
-    ['Triángulos', formatInt(stats.triangles)],
-    ['Materiales', stats.materials],
-    ['Texturas', stats.textures],
+    ['stats.meshes', stats.meshes],
+    ['stats.triangles', formatInt(stats.triangles)],
+    ['stats.materials', stats.materials],
+    ['stats.textures', stats.textures],
   ];
   ui.stats.replaceChildren(...items.map(([label, value]) => {
     const item = document.createElement('div');
-    item.innerHTML = `<dd>${value}</dd><dt>${label}</dt>`;
+    item.innerHTML = `<dd>${value}</dd><dt>${t(label)}</dt>`;
     return item;
   }));
 }
 
-function renderWarnings(messages) {
-  ui.warnings.replaceChildren(...messages.map((message) => {
+function renderWarnings(warnings) {
+  ui.warnings.replaceChildren(...warnings.map((warning) => {
     const item = document.createElement('li');
-    item.textContent = message;
+    item.textContent = t(warning.key, warning.params);
     return item;
   }));
+}
+
+function roleLabel(roles) {
+  if (!roles.length) return t('role.unused');
+  return roles.map((role) => t(`role.${role}`)).join(', ');
 }
 
 function renderTextures({ images }) {
@@ -118,7 +128,10 @@ function renderTextures({ images }) {
   ui.textureTotal.textContent = '';
 
   if (!images.length) {
-    ui.textures.innerHTML = '<p class="empty">Este modelo no tiene texturas. Si las tienes aparte, suéltalas junto al modelo o en un ZIP.</p>';
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = t('textures.empty');
+    ui.textures.replaceChildren(empty);
     return;
   }
 
@@ -131,17 +144,16 @@ function renderTextures({ images }) {
     row.innerHTML = `
       <div class="thumb"><img loading="lazy" alt=""></div>
       <div class="meta"><div class="name"></div><div class="role"></div><div class="dims"></div></div>
-      <button class="dl" title="Descargar">${downloadIcon}</button>`;
+      <button class="dl">${downloadIcon}</button>`;
     row.querySelector('img').src = url;
-    row.querySelector('.role').textContent = image.roles.length
-      ? image.roles.map((role) => ROLE_LABELS[role] || role).join(', ')
-      : 'Sin uso';
+    row.querySelector('.role').textContent = roleLabel(image.roles);
 
     image.nameEl = row.querySelector('.name');
     image.dimsEl = row.querySelector('.dims');
     image.nameEl.textContent = image.nameEl.title = image.file;
 
     const button = row.querySelector('.dl');
+    button.title = t('textures.download');
     button.onclick = async () => {
       button.disabled = true;
       try {
@@ -213,26 +225,24 @@ async function updateReduction() {
 
   if (!state.reduce) {
     state.reduced = null;
+    state.reduction = null;
     viewer.setPreview(null);
-    setViewerInfo(`${formatInt(result.stats.triangles)} triángulos`);
+    renderViewerInfo();
     return;
   }
 
-  $('model-result').textContent = 'Calculando…';
+  ui.modelResult.textContent = t('model.calculating');
   try {
     const meshes = await simplifyMeshes(result.data.meshes, state.ratio);
     if (job !== modelJob) return;
     state.reduced = meshes;
+    state.reduction = { before: result.stats.triangles, after: countTriangles(meshes) };
     viewer.setPreview(meshesToGroup(meshes, result.threeMaterials, result.factor));
-
-    const before = result.stats.triangles;
-    const after = countTriangles(meshes);
-    const percent = Math.round((1 - after / before) * 100);
-    $('model-result').innerHTML = `Triángulos: ${formatInt(before)} → <b>${formatInt(after)}</b> (−${percent}%)`;
-    setViewerInfo(`Optimizado: ${formatInt(after)} de ${formatInt(before)} triángulos`);
+    renderReduction();
+    renderViewerInfo();
   } catch (error) {
     console.error(error);
-    $('model-result').textContent = `No se pudo optimizar: ${error.message || error}`;
+    ui.modelResult.textContent = t('model.failed', { message: describeError(error) });
   }
 }
 
@@ -245,7 +255,8 @@ function showLoadedLayout() {
   $('drop-title').hidden = true;
   $('formats').hidden = true;
   document.querySelector('.drop-icon').classList.add('gone');
-  ui.pick.textContent = 'Cambiar';
+  ui.pick.dataset.i18n = 'drop.change';
+  ui.pick.textContent = t('drop.change');
 }
 
 async function load(list) {
@@ -255,13 +266,14 @@ async function load(list) {
   setBusy(true);
 
   try {
-    setStatus('Leyendo archivos…');
+    setStatus('status.reading');
     const files = await readFiles(list);
     state.input?.dispose?.();
     state.input = await loadInput(files, { dracoPath: DRACO_PATH, onStatus: setStatus });
     ui.fileName.textContent = state.input.mainName.split('/').pop();
 
     state.result = await buildExport(state.input, { imageTools, onStatus: setStatus });
+    state.reduction = null;
     resetTextureCache();
     await Promise.all(state.result.images.map(readImageSize));
 
@@ -274,17 +286,19 @@ async function load(list) {
   } catch (error) {
     console.error(error);
     state.result = null;
+    state.reduction = null;
+    renderViewerInfo();
     ui.stats.replaceChildren();
     ui.textures.replaceChildren();
     ui.textureCount.textContent = '';
-    renderWarnings([`Error: ${error.message || error}`]);
+    renderWarnings([{ key: 'error.prefix', params: { message: describeError(error) } }]);
   } finally {
     setStatus('');
   }
 }
 
 async function processTextures(result) {
-  if (textureOptions.optimize) setStatus('Optimizando texturas…');
+  if (textureOptions.optimize) setStatus('status.optimizingTextures');
   const textures = [];
   for (const image of result.images) {
     const texture = await processTexture(image);
@@ -294,7 +308,7 @@ async function processTextures(result) {
 }
 
 function modelFiles(result, textures) {
-  if (state.reduced) setStatus('Escribiendo modelo optimizado…');
+  if (state.reduced) setStatus('status.writingOptimized');
   const output = state.reduced ? writeModel(result.data, state.reduced, result.baseName) : result;
   if (state.format === 'obj') {
     return [
@@ -307,7 +321,7 @@ function modelFiles(result, textures) {
 
 function fileSuffix() {
   const reduction = state.reduced ? `_${Math.round(state.ratio * 100)}pct` : '';
-  const textures = textureOptions.optimize ? `_optimizado${sizeSuffix()}` : '';
+  const textures = textureOptions.optimize ? `_optimized${sizeSuffix()}` : '';
   return reduction + textures;
 }
 
@@ -327,7 +341,7 @@ async function run(task) {
 
 async function downloadAll(result) {
   if (state.format === 'glb') {
-    setStatus('Creando GLB…');
+    setStatus('status.creatingGlb');
     const glb = await viewer.exportGLB({
       name: result.baseName,
       scale: state.input.unitToCm / 100,
@@ -339,7 +353,7 @@ async function downloadAll(result) {
   }
 
   const textures = await processTextures(result);
-  setStatus('Creando ZIP…');
+  setStatus('status.creatingZip');
   const entries = [
     ...modelFiles(result, textures),
     ...textures.map((texture) => [`textures/${texture.file}`, texture.bytes]),
@@ -359,19 +373,25 @@ async function downloadModel(result) {
 
 async function downloadTextures(result) {
   const textures = await processTextures(result);
-  setStatus('Creando ZIP…');
+  setStatus('status.creatingZip');
   const entries = textures.map((texture) => [texture.file, texture.bytes]);
-  download(await buildZip(entries), `${result.baseName}_texturas${fileSuffix()}.zip`);
+  download(await buildZip(entries), `${result.baseName}_textures${fileSuffix()}.zip`);
 }
 
-function setFormat(format) {
-  state.format = format;
+function renderFormat() {
+  const { main, model } = FORMATS[state.format];
   for (const button of $('out-fmt').querySelectorAll('button')) {
-    button.classList.toggle('on', button.dataset.f === format);
+    button.classList.toggle('on', button.dataset.f === state.format);
   }
-  ui.downloadMain.textContent = FORMATS[format].main;
-  ui.downloadModel.textContent = FORMATS[format].model;
-  ui.downloadModel.hidden = format === 'glb';
+  ui.downloadMain.textContent = t(main);
+  ui.downloadModel.textContent = model ? t(model) : '';
+  ui.downloadModel.hidden = !model;
+}
+
+function renderLanguage() {
+  for (const button of $('lang').querySelectorAll('button')) {
+    button.classList.toggle('on', button.dataset.lang === getLanguage());
+  }
 }
 
 function applyTextureOptions() {
@@ -386,17 +406,17 @@ function applyTextureOptions() {
 
 function acceptFiles(files) {
   if (containsModel(files)) load([...files]);
-  else alert('Incluye un modelo: GLB, glTF, FBX, OBJ, DAE, STL o PLY (o un ZIP que lo contenga).');
+  else alert(t('error.noModelSelected'));
 }
 
 async function loadFromUrl(url) {
   try {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const name = decodeURIComponent(new URL(url, location.href).pathname.split('/').pop()) || 'modelo.glb';
+    const name = decodeURIComponent(new URL(url, location.href).pathname.split('/').pop()) || 'model.glb';
     load([new File([await response.blob()], name)]);
   } catch (error) {
-    alert(`No se pudo cargar ${url}: ${error.message || error}`);
+    alert(t('error.loadUrl', { url, message: describeError(error) }));
   }
 }
 
@@ -428,7 +448,14 @@ $('exact-h').oninput = (event) => {
 };
 
 for (const button of $('out-fmt').querySelectorAll('button')) {
-  button.onclick = () => setFormat(button.dataset.f);
+  button.onclick = () => {
+    state.format = button.dataset.f;
+    renderFormat();
+  };
+}
+
+for (const button of $('lang').querySelectorAll('button')) {
+  button.onclick = () => setLanguage(button.dataset.lang);
 }
 
 ui.downloadMain.onclick = () => run(downloadAll);
@@ -465,8 +492,24 @@ addEventListener('drop', (event) => {
   if (event.dataTransfer.files.length) acceptFiles(event.dataTransfer.files);
 });
 
-createDropdown($('size-sel'));
-setFormat('fbx');
+onLanguageChange(() => {
+  renderLanguage();
+  renderFormat();
+  sizeDropdown.render();
+  renderViewerInfo();
+  renderReduction();
+  if (state.result) {
+    renderStats(state.result);
+    renderWarnings(state.result.warnings);
+    renderTextures(state.result);
+  }
+});
+
+ui.pick.dataset.i18n = 'drop.pick';
+applyTranslations();
+sizeDropdown.render();
+renderLanguage();
+renderFormat();
 applyTextureOptions();
 showGithubStars('ATR-APPS/ATR-MODELFBX-APP', { badge: $('gh-stars'), counter: $('gh-count') });
 

@@ -1,6 +1,8 @@
+import { getLanguage } from './i18n.js';
+
 export const $ = (id) => document.getElementById(id);
 
-export const formatInt = (n) => Math.round(n).toLocaleString('es');
+export const formatInt = (n) => Math.round(n).toLocaleString(getLanguage());
 
 export function formatBytes(n) {
   if (n > 1048576) return `${(n / 1048576).toFixed(1)} MB`;

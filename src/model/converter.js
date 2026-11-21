@@ -13,6 +13,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { writeFBX } from '../export/fbx-writer.js';
 import { writeOBJ } from '../export/obj-writer.js';
 import { weldMesh } from './mesh-tools.js';
+import { LocalizedError } from '../i18n.js';
 
 export const MODEL_EXTS = ['glb', 'gltf', 'fbx', 'obj', 'dae', 'stl', 'ply'];
 
@@ -79,6 +80,10 @@ function uniqueNamer() {
   };
 }
 
+function warn(warnings, key, params = {}) {
+  warnings.set(`${key}|${JSON.stringify(params)}`, { key, params });
+}
+
 const toArrayBuffer = (u8) => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
 
 function readContainer(buffer) {
@@ -94,13 +99,13 @@ function readContainer(buffer) {
       else if (type === 0x004e4942) bin = new Uint8Array(buffer, start, len);
       offset = start + len;
     }
-    if (!json) throw new Error('El GLB no contiene JSON.');
+    if (!json) throw new LocalizedError('error.glbNoJson');
     return { json, bin };
   }
   try {
     return { json: JSON.parse(new TextDecoder().decode(new Uint8Array(buffer))), bin: null };
   } catch {
-    throw new Error('El archivo no es un GLB ni un glTF válido.');
+    throw new LocalizedError('error.invalidGltf');
   }
 }
 
@@ -125,7 +130,7 @@ function gltfImages(json, bin, fileMap, warnings) {
     } else if (img.uri) {
       const f = fileMap.get(keyOf(img.uri));
       if (f) { bytes = f.bytes; hint = hint || stripExt(baseOf(f.name)); }
-      else warnings.add(`Falta la textura "${keyOf(img.uri)}": súbela junto al modelo o en un ZIP.`);
+      else warn(warnings, 'warn.missingTexture', { name: keyOf(img.uri) });
     }
     if (bytes) mime = sniffMime(bytes) || mime || MIME_BY_EXT[extOf(img.uri || '')];
     return { index: i, hint, bytes, mime };
@@ -171,9 +176,9 @@ export async function loadInput(files, { dracoPath, onStatus = () => {} } = {}) 
   const main = [...files]
     .filter((f) => MODEL_EXTS.includes(extOf(f.name)))
     .sort((a, b) => MODEL_EXTS.indexOf(extOf(a.name)) - MODEL_EXTS.indexOf(extOf(b.name)))[0];
-  if (!main) throw new Error('No encontré ningún modelo. Formatos: GLB, glTF, FBX, OBJ, DAE, STL, PLY.');
+  if (!main) throw new LocalizedError('error.noModel');
   const ext = extOf(main.name);
-  const warnings = new Set();
+  const warnings = new Map();
 
   const blobUrls = new Map();
   const blobToFile = new Map();
@@ -182,7 +187,7 @@ export async function loadInput(files, { dracoPath, onStatus = () => {} } = {}) 
     if (/^(data|blob|https?):/.test(url)) return url;
     const f = fileMap.get(keyOf(url));
     if (!f) {
-      warnings.add(`Falta el archivo "${keyOf(url)}": súbelo junto al modelo o en un ZIP.`);
+      warn(warnings, 'warn.missingFile', { name: keyOf(url) });
       return url;
     }
     let u = blobUrls.get(f.name);
@@ -212,7 +217,7 @@ export async function loadInput(files, { dracoPath, onStatus = () => {} } = {}) 
     ? Promise.race([new Promise((r) => waiters.push(r)), new Promise((r) => setTimeout(r, 30000))])
     : Promise.resolve());
 
-  onStatus('Cargando modelo…');
+  onStatus('status.loadingModel');
   const buffer = toArrayBuffer(main.bytes);
   const text = () => new TextDecoder().decode(main.bytes);
   const result = { kind: ext, mainName: main.name, files: fileMap, blobToFile, warnings, animations: [], flipV: false, unitToCm: 1 };
@@ -239,7 +244,7 @@ export async function loadInput(files, { dracoPath, onStatus = () => {} } = {}) 
       const materials = new MTLLoader(manager).parse(new TextDecoder().decode(mtl.bytes), '');
       materials.preload();
       objLoader.setMaterials(materials);
-    } else if (ref) warnings.add(`Falta el archivo de materiales "${ref}": súbelo junto al OBJ.`);
+    } else if (ref) warn(warnings, 'warn.missingMtl', { name: ref });
     result.scene = objLoader.parse(src);
   } else if (ext === 'dae') {
     const collada = new ColladaLoader(manager).parse(text(), '');
@@ -254,7 +259,7 @@ export async function loadInput(files, { dracoPath, onStatus = () => {} } = {}) 
     if (ext === 'stl') result.unitToCm = 0.1;
   }
 
-  onStatus('Cargando texturas…');
+  onStatus('status.loadingTextures');
   await idle();
   result.scene.updateMatrixWorld(true);
   result.dispose = () => { for (const u of blobUrls.values()) URL.revokeObjectURL(u.split('#')[0]); };
@@ -364,7 +369,7 @@ const THREE_ROLES = {
 };
 
 export async function buildExport(loaded, { imageTools, onStatus = () => {} } = {}) {
-  const warnings = new Set(loaded.warnings);
+  const warnings = new Map(loaded.warnings);
   const scene = loaded.scene;
   scene.updateMatrixWorld(true);
   const factor = loaded.unitToCm;
@@ -438,12 +443,12 @@ export async function buildExport(loaded, { imageTools, onStatus = () => {} } = 
     return idx;
   }
 
-  onStatus('Procesando geometría…');
+  onStatus('status.processingGeometry');
   const objs = [];
   scene.traverse((o) => { if (o.isMesh && o.geometry?.attributes?.position) objs.push(o); });
-  if (!objs.length) throw new Error('No se encontró ninguna malla en el archivo.');
-  if (objs.some((o) => o.isSkinnedMesh)) warnings.add('El modelo tiene esqueleto: se exporta en su pose actual, sin huesos ni skinning.');
-  if (loaded.animations?.length) warnings.add(`Se ignoraron ${loaded.animations.length} animación(es) (se conservan solo al exportar a GLB).`);
+  if (!objs.length) throw new LocalizedError('error.noMesh');
+  if (objs.some((o) => o.isSkinnedMesh)) warn(warnings, 'warn.skinned');
+  if (loaded.animations?.length) warn(warnings, 'warn.animations', { count: loaded.animations.length });
 
   const buckets = new Map();
   for (const o of objs) {
@@ -473,7 +478,7 @@ export async function buildExport(loaded, { imageTools, onStatus = () => {} } = 
     if (im && !im.uses.length) im.uses.push({ mat: g.name, role });
   }
 
-  onStatus('Extrayendo texturas…');
+  onStatus('status.extractingTextures');
   const fileNamer = uniqueNamer();
   const outImages = [];
   const entryByKey = new Map();
@@ -484,9 +489,9 @@ export async function buildExport(loaded, { imageTools, onStatus = () => {} } = 
     let ext = EXT_BY_MIME[mime] || extOf(im.hint || '') || 'bin';
     if (TO_PNG.has(ext) && imageTools) {
       try { bytes = await imageTools.toPNG(bytes, mime); mime = 'image/png'; ext = 'png'; }
-      catch { warnings.add(`No se pudo convertir una imagen .${ext} a PNG.`); }
+      catch { warn(warnings, 'warn.pngFailed', { ext }); }
     }
-    if (!MAX_FRIENDLY.has(ext)) warnings.add(`Una textura viene en formato .${ext}, que 3ds Max quizá no pueda abrir.`);
+    if (!MAX_FRIENDLY.has(ext)) warn(warnings, 'warn.unsupportedFormat', { ext });
     let base = got.hint || im.hint;
     if (!base && im.uses.length) base = `${im.uses[0].mat}_${im.uses[0].role}`;
     const name = fileNamer(sanitizeName(base, `texture_${outImages.length}`));
@@ -543,7 +548,7 @@ export async function buildExport(loaded, { imageTools, onStatus = () => {} } = 
     };
   });
 
-  onStatus('Escribiendo archivos…');
+  onStatus('status.writingFiles');
   const baseName = sanitizeName(stripExt(baseOf(loaded.mainName)), 'modelo');
   const data = { meshes, materials: outMaterials, textures: fileTextures };
 
@@ -555,7 +560,7 @@ export async function buildExport(loaded, { imageTools, onStatus = () => {} } = 
     ...writeModel(data, meshes, baseName),
     images: outImages,
     stats: { meshes: meshes.length, triangles, materials: materials.length, textures: outImages.length },
-    warnings: [...warnings],
+    warnings: [...warnings.values()],
   };
 }
 

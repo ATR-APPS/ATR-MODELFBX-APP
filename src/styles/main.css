@@ -296,13 +296,23 @@ label.row { cursor: pointer; }
 .tex .dl svg { width: 16px; height: 16px; }
 .tex .dl:disabled { opacity: .5; cursor: default; }
 
-.gh-link {
+.top-actions {
   position: absolute; right: 24px; top: 50%; transform: translateY(-50%);
+  display: flex; align-items: center; gap: 8px;
+}
+.gh-link {
   display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px;
   color: var(--muted); border: 1px solid var(--border); text-decoration: none;
 }
+.lang { display: flex; height: 34px; padding: 3px; gap: 2px; border: 1px solid var(--border); border-radius: 8px; }
+.lang button {
+  border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600;
+  letter-spacing: .04em; padding: 0 8px; border-radius: 5px; cursor: pointer;
+}
+.lang button:hover { color: var(--text); }
+.lang button.on { background: var(--surface-2); color: var(--text); }
 .gh-stars { display: flex; align-items: center; gap: 5px; padding-left: 10px; border-left: 1px solid var(--border); font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .gh-stars svg { width: 14px !important; height: 14px !important; }
 .gh-link:hover { color: var(--text); border-color: var(--border); background: var(--surface-2); }
 .gh-link > svg { width: 18px; height: 18px; }
-@media (max-width: 900px) { .gh-link { right: 16px; } }
+@media (max-width: 900px) { .top-actions { right: 16px; } }
