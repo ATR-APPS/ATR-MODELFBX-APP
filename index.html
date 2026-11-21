@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GLB a FBX</title>
+  <meta name="description" content="Convierte modelos GLB/glTF (p. ej. de Sketchfab) a FBX y extrae sus texturas para 3ds Max. Todo ocurre en tu navegador.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%234f8cff' d='M12 2 3 7v10l9 5 9-5V7z'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/1.0.11/pako.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/upng-js/2.1.0/UPNG.min.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+      "jszip": "https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M3 7l9 5 9-5M12 12v10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+      <span>GLB → FBX</span>
+    </div>
+    <p class="tagline">Convierte modelos a FBX, OBJ o GLB y extrae sus texturas. Nada se sube: todo se procesa en tu navegador.</p>
+  </header>
+
+  <main>
+    <section id="drop" class="drop">
+      <input id="file" type="file" multiple accept=".glb,.gltf,.bin,.fbx,.obj,.mtl,.dae,.stl,.ply,.zip,.png,.jpg,.jpeg,.webp,.tga,.bmp,.tif,.tiff,.dds" hidden>
+      <div class="drop-inner">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <h1>Suelta aquí tu modelo 3D</h1>
+        <p>o <button id="pick" class="link">elige archivos</button></p>
+        <p class="formats">GLB · glTF · FBX · OBJ · DAE · STL · PLY</p>
+        <p class="small">Si las texturas vienen aparte, suéltalas junto al modelo o mete todo en un ZIP.</p>
+      </div>
+    </section>
+
+    <section id="work" class="work" hidden>
+      <div class="viewer-wrap">
+        <canvas id="viewer"></canvas>
+        <div id="status" class="status" hidden></div>
+        <div class="viewer-hint">Arrastra para rotar · rueda para zoom</div>
+      </div>
+
+      <aside class="panel">
+        <div class="file-row">
+          <div>
+            <div class="label">Archivo</div>
+            <div id="fname" class="fname"></div>
+          </div>
+          <button id="another" class="btn ghost">Otro archivo</button>
+        </div>
+
+        <dl id="stats" class="stats"></dl>
+
+        <div class="opts">
+          <label>¿Optimizar texturas?</label>
+          <div class="seg two" id="optimize" role="radiogroup">
+            <button data-v="no">No</button>
+            <button data-v="yes" class="on">Sí</button>
+          </div>
+
+          <div id="opt-yes" class="optbox">
+            <div class="sub">
+              <span>Tamaño</span>
+              <select id="size-sel">
+                <option value="128">Máximo 128 px</option>
+                <option value="256">Máximo 256 px</option>
+                <option value="512" selected>Máximo 512 px</option>
+                <option value="1024">Máximo 1024 px</option>
+                <option value="2048">Máximo 2048 px</option>
+                <option value="exact">Tamaño exacto…</option>
+              </select>
+            </div>
+            <div id="exact-opts" class="sub" hidden>
+              <input id="exact-w" type="number" value="512" min="1" max="8192" step="1" aria-label="Ancho">
+              <span class="muted">×</span>
+              <input id="exact-h" type="number" value="512" min="1" max="8192" step="1" aria-label="Alto">
+              <span class="muted">px</span>
+            </div>
+            <p id="opt-hint" class="hint">Se reduce al tamaño más cercano (128, 256, 512…) sin pasar del máximo, y se comprime para que pese menos sin perder calidad visible.</p>
+          </div>
+          <p id="opt-no" class="hint" hidden>Las texturas se descargan tal cual vienen en el modelo.</p>
+        </div>
+
+        <div class="opts">
+          <label>Formato de salida</label>
+          <div class="seg" id="out-fmt" role="radiogroup">
+            <button data-f="fbx" class="on">FBX</button>
+            <button data-f="obj">OBJ</button>
+            <button data-f="glb">GLB</button>
+          </div>
+          <p id="fmt-hint" class="hint"></p>
+        </div>
+
+        <div class="actions">
+          <button id="dl-zip" class="btn primary">Descargar ZIP (FBX + texturas)</button>
+          <div class="actions-row">
+            <button id="dl-model" class="btn">Solo FBX</button>
+            <button id="dl-tex" class="btn">Solo texturas</button>
+          </div>
+        </div>
+
+        <ul id="warnings" class="warnings"></ul>
+
+        <details class="adv">
+          <summary>Escala del modelo (opcional)</summary>
+          <div class="scale-row">
+            <input id="scale" type="number" value="1" min="0.0001" step="any">
+            <span class="muted">Déjalo en 1. Cámbialo solo si en Max sale muy grande o muy pequeño.</span>
+          </div>
+        </details>
+
+        <h2>Texturas <span id="tex-count" class="muted"></span></h2>
+        <div id="textures" class="textures"></div>
+      </aside>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
