@@ -16,7 +16,8 @@
     "imports": {
       "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
       "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-      "jszip": "https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm"
+      "jszip": "https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm",
+      "meshopt-simplifier": "https://cdn.jsdelivr.net/npm/meshoptimizer@0.22.0/meshopt_simplifier.module.js"
     }
   }
   </script>
@@ -31,34 +32,56 @@
   </header>
 
   <main>
-    <section id="drop" class="drop">
+    <section id="drop" class="dropbar" title="Suelta aquí tu modelo o haz clic para elegir">
       <input id="file" type="file" multiple accept=".glb,.gltf,.bin,.fbx,.obj,.mtl,.dae,.stl,.ply,.zip,.png,.jpg,.jpeg,.webp,.tga,.bmp,.tif,.tiff,.dds" hidden>
-      <div class="drop-inner">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <h1>Suelta aquí tu modelo 3D</h1>
-        <p>o <button id="pick" class="link">elige archivos</button></p>
-        <p class="formats">GLB · glTF · FBX · OBJ · DAE · STL · PLY</p>
-        <p class="small">Si las texturas vienen aparte, suéltalas junto al modelo o mete todo en un ZIP.</p>
+      <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div class="drop-text">
+        <strong id="drop-title">Suelta aquí tu modelo 3D o <button id="pick" class="link">elige archivos</button></strong>
+        <span class="muted">GLB · glTF · FBX · OBJ · DAE · STL · PLY · ZIP — las texturas sueltas también</span>
       </div>
+      <div id="file-chip" class="file-chip" hidden>
+        <span class="label">Archivo</span>
+        <span id="fname" class="fname"></span>
+      </div>
+      <button id="another" class="btn" hidden>Cambiar</button>
     </section>
 
-    <section id="work" class="work" hidden>
+    <section id="work" class="work">
       <div class="viewer-wrap">
         <canvas id="viewer"></canvas>
+        <div id="empty" class="viewer-empty">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M3 7l9 5 9-5M12 12v10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+          <p>Tu modelo aparecerá aquí</p>
+        </div>
         <div id="status" class="status" hidden></div>
-        <div class="viewer-hint">Arrastra para rotar · rueda para zoom</div>
+        <div id="viewer-tools" class="viewer-tools" hidden>
+          <label class="tool"><input id="wire" type="checkbox"> Ver malla</label>
+          <button id="fit" class="tool" title="Centrar vista">Centrar</button>
+        </div>
+        <div id="viewer-info" class="viewer-info" hidden></div>
+        <div class="viewer-hint">Arrastrar: rotar · Clic derecho: mover · Rueda: zoom</div>
       </div>
 
       <aside class="panel">
-        <div class="file-row">
-          <div>
-            <div class="label">Archivo</div>
-            <div id="fname" class="fname"></div>
-          </div>
-          <button id="another" class="btn ghost">Otro archivo</button>
-        </div>
-
+        <p id="panel-empty" class="panel-empty">Carga un modelo para ver sus datos, texturas y opciones de exportación.</p>
+        <div id="panel-body" class="panel-body" hidden>
         <dl id="stats" class="stats"></dl>
+
+        <div class="opts">
+          <label>¿Optimizar modelo?</label>
+          <div class="seg two" id="model-opt" role="radiogroup">
+            <button data-v="no" class="on">No</button>
+            <button data-v="yes">Sí</button>
+          </div>
+          <div id="model-yes" class="optbox" hidden>
+            <div class="sub slider-row">
+              <input id="ratio" type="range" min="5" max="95" step="5" value="50" aria-label="Porcentaje de triángulos">
+              <span id="ratio-val" class="ratio-val">50%</span>
+            </div>
+            <p id="model-result" class="result"></p>
+            <p class="hint">Reduce los polígonos conservando la forma, las UVs y los materiales. Activa «Ver malla» en la vista 3D para comparar. Hasta 50% casi no se nota.</p>
+          </div>
+        </div>
 
         <div class="opts">
           <label>¿Optimizar texturas?</label>
@@ -120,6 +143,7 @@
 
         <h2>Texturas <span id="tex-count" class="muted"></span></h2>
         <div id="textures" class="textures"></div>
+        </div>
       </aside>
     </section>
   </main>

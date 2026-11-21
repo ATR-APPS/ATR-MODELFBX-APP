@@ -37,7 +37,8 @@ function arrayBlock(name, values, isInt, ind) {
     for (let j = i; j < end; j++) parts[j - i] = isInt ? String(values[j]) : num(values[j]);
     lines.push(parts.join(','));
   }
-  return `${ind}${name}: *${n} {\n${ind}\ta: ${lines.join(',\n' + ind + '\t')}\n${ind}} \n`;
+  // Como el FBX SDK de Autodesk: las líneas de continuación van sin sangría
+  return `${ind}${name}: *${n} {\n${ind}\ta: ${lines.join(',\n')}\n${ind}} \n`;
 }
 
 // Las posiciones se escriben en centímetros (unidad nativa de FBX).

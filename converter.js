@@ -14,6 +14,7 @@ import { DDSLoader } from 'three/addons/loaders/DDSLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { writeFBX } from './fbx-writer.js';
 import { writeOBJ } from './obj-writer.js';
+import { weldMesh } from './mesh-tools.js';
 
 const THREE_VERSION = '0.160.0';
 
@@ -423,6 +424,7 @@ export async function buildExport(loaded, { scale = 1, imageTools, onStatus = ()
   const matNamer = uniqueNamer();
   const materials = []; // { name, color, opacity, emissive, alphaMode, roles: {role: imageKey} }
   const matIndexByKey = new Map();
+  const threeMaterials = []; // material three.js por índice (para la vista previa)
   const gltfMats = isGltf ? (loaded.container.json.materials || []).map((d, i) => gltfMaterial(loaded.container.json, d, i)) : [];
 
   function materialIndexFor(threeMat) {
@@ -451,6 +453,7 @@ export async function buildExport(loaded, { scale = 1, imageTools, onStatus = ()
     const idx = materials.length;
     materials.push(rec);
     matIndexByKey.set(key, idx);
+    threeMaterials[idx] = threeMat;
     return idx;
   }
 
@@ -480,8 +483,9 @@ export async function buildExport(loaded, { scale = 1, imageTools, onStatus = ()
       return { ...b, triMaterials: partMaterials(o, b, materialIndexFor) };
     });
     const merged = mergeParts(baked);
-    meshes.push({ name: meshNamer(sanitizeName(name, 'Mesh')), flipV: loaded.flipV, ...merged });
-    triangles += merged.indices.length / 3;
+    const mesh = weldMesh({ name: meshNamer(sanitizeName(name, 'Mesh')), flipV: loaded.flipV, ...merged });
+    meshes.push(mesh);
+    triangles += mesh.indices.length / 3;
   }
 
   // --- Usos de cada imagen ---
@@ -567,14 +571,21 @@ export async function buildExport(loaded, { scale = 1, imageTools, onStatus = ()
   onStatus('Escribiendo archivos…');
   const baseName = sanitizeName(stripExt(baseOf(loaded.mainName)), 'modelo');
   const data = { meshes, materials: outMaterials, textures: fileTextures };
-  const fbx = writeFBX(data);
-  const { obj, mtl } = writeOBJ(data, `${baseName}.mtl`);
 
   return {
     baseName,
-    fbx, obj, mtl,
+    data,
+    factor,
+    threeMaterials,
+    ...writeModel(data, meshes, baseName),
     images: outImages,
     stats: { meshes: meshes.length, triangles, materials: materials.length, textures: outImages.length },
     warnings: [...warnings],
   };
+}
+
+// Escribe FBX y OBJ con las mallas indicadas (originales u optimizadas)
+export function writeModel(data, meshes, baseName) {
+  const d = { ...data, meshes };
+  return { fbx: writeFBX(d), ...writeOBJ(d, `${baseName}.mtl`) };
 }

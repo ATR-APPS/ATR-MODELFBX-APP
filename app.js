@@ -2,9 +2,11 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import JSZip from 'jszip';
-import { loadInput, buildExport, extOf, MODEL_EXTS } from './converter.js';
+import { loadInput, buildExport, writeModel, extOf, MODEL_EXTS } from './converter.js';
+import { simplifyMeshes, countTriangles } from './mesh-tools.js';
 
 const $ = (id) => document.getElementById(id);
+const fmtInt = (n) => Math.round(n).toLocaleString('es');
 const els = {
   drop: $('drop'), file: $('file'), pick: $('pick'), work: $('work'), canvas: $('viewer'),
   status: $('status'), fname: $('fname'), stats: $('stats'), scale: $('scale'),
@@ -15,6 +17,9 @@ const els = {
 let current = null;      // resultado de buildExport()
 let loaded = null;       // resultado de loadInput()
 let outFmt = 'fbx';      // 'fbx' | 'obj' | 'glb'
+const modelOpts = { on: false, ratio: 0.5 };
+let optimized = null;    // mallas reducidas (o null si no se optimiza)
+let preview = null;      // grupo three.js con la malla reducida
 let thumbUrls = [];
 
 // ---------- Herramientas de imagen (canvas) ----------
@@ -210,8 +215,13 @@ const renderer = new THREE.WebGLRenderer({ canvas: els.canvas, antialias: true, 
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
 const view = new THREE.Scene();
 view.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
+keyLight.position.set(1, 2, 1.5);
+view.add(keyLight, new THREE.HemisphereLight(0xffffff, 0x444455, 0.4));
+let grid = null;
 const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 1000);
 const controls = new OrbitControls(camera, els.canvas);
 controls.enableDamping = true;
@@ -240,13 +250,39 @@ function showScene(scene) {
   }
   shown = scene;
   view.add(scene);
-  const box = new THREE.Box3().setFromObject(scene);
-  const size = box.getSize(new THREE.Vector3()).length() || 1;
+  fitView();
+}
+
+// Encuadra el modelo y coloca el suelo de referencia debajo
+function fitView() {
+  const target = preview || shown;
+  if (!target) return;
+  const box = new THREE.Box3().setFromObject(target);
+  if (box.isEmpty()) return;
+  const sizeV = box.getSize(new THREE.Vector3());
+  const size = sizeV.length() || 1;
   const center = box.getCenter(new THREE.Vector3());
+  const dist = (size / 2) / Math.tan((camera.fov * Math.PI) / 360) * 1.05;
   camera.near = size / 1000; camera.far = size * 100; camera.updateProjectionMatrix();
-  camera.position.copy(center).add(new THREE.Vector3(0.6, 0.35, 1).normalize().multiplyScalar(size * 1.1));
+  camera.position.copy(center).add(new THREE.Vector3(0.7, 0.45, 1).normalize().multiplyScalar(dist));
   controls.target.copy(center);
+  controls.minDistance = size / 50;
+  controls.maxDistance = size * 20;
   controls.update();
+  keyLight.position.copy(center).add(new THREE.Vector3(1, 2, 1.5).multiplyScalar(size));
+  if (grid) { view.remove(grid); grid.geometry.dispose(); grid.material.dispose(); }
+  const span = Math.max(sizeV.x, sizeV.z) * 2.5 || size;
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  grid = new THREE.GridHelper(span, 20, dark ? 0x3a4250 : 0xb8bec8, dark ? 0x262c36 : 0xd4d8de);
+  grid.position.set(center.x, box.min.y, center.z);
+  view.add(grid);
+}
+$('fit').onclick = fitView;
+
+function setViewerInfo(text) {
+  const el = $('viewer-info');
+  el.hidden = !text;
+  el.textContent = text || '';
 }
 
 // ---------- UI ----------
@@ -378,6 +414,111 @@ function updateDims() {
   }, 250);
 }
 
+// ---------- Opción "Optimizar modelo" ----------
+let modelToken = 0;
+
+function buildPreview(meshes) {
+  const group = new THREE.Group();
+  const fallback = new THREE.MeshStandardMaterial({ color: 0xbbbbbb });
+  const mats = current.threeMaterials.map((m) => m || fallback);
+  const inv = 1 / current.factor;
+  for (const m of meshes) {
+    const g = new THREE.BufferGeometry();
+    const pos = new Float32Array(m.positions.length);
+    for (let i = 0; i < pos.length; i++) pos[i] = m.positions[i] * inv;
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    if (m.normals) g.setAttribute('normal', new THREE.BufferAttribute(m.normals, 3));
+    if (m.uvs) g.setAttribute('uv', new THREE.BufferAttribute(m.uvs, 2));
+    g.setIndex(new THREE.BufferAttribute(m.indices, 1));
+    // grupos de triángulos consecutivos con el mismo material
+    const tm = m.triMaterials;
+    let start = 0;
+    for (let t = 1; t <= tm.length; t++) {
+      if (t === tm.length || tm[t] !== tm[start]) { g.addGroup(start * 3, (t - start) * 3, tm[start]); start = t; }
+    }
+    const mesh = new THREE.Mesh(g, mats);
+    mesh.name = m.name;
+    group.add(mesh);
+  }
+  return group;
+}
+
+function setPreview(group) {
+  if (preview) {
+    view.remove(preview);
+    preview.traverse((o) => o.geometry?.dispose());
+  }
+  preview = group;
+  if (preview) view.add(preview);
+  if (loaded?.scene) loaded.scene.visible = !preview;
+  applyWire();
+}
+
+async function updateModel() {
+  if (!current) return;
+  const token = ++modelToken;
+  $('model-yes').hidden = !modelOpts.on;
+  if (!modelOpts.on) {
+    optimized = null; setPreview(null);
+    setViewerInfo(`${fmtInt(current.stats.triangles)} triángulos`);
+    return;
+  }
+  $('model-result').textContent = 'Calculando…';
+  try {
+    const meshes = await simplifyMeshes(current.data.meshes, modelOpts.ratio);
+    if (token !== modelToken) return;
+    optimized = meshes;
+    setPreview(buildPreview(meshes));
+    const before = current.stats.triangles, after = countTriangles(meshes);
+    $('model-result').innerHTML = `Triángulos: ${fmtInt(before)} → <b>${fmtInt(after)}</b> (−${Math.round((1 - after / before) * 100)}%)`;
+    setViewerInfo(`Optimizado: ${fmtInt(after)} de ${fmtInt(before)} triángulos`);
+  } catch (err) {
+    console.error(err);
+    $('model-result').textContent = `No se pudo optimizar: ${err.message || err}`;
+  }
+}
+
+for (const b of $('model-opt').querySelectorAll('button')) {
+  b.onclick = () => {
+    modelOpts.on = b.dataset.v === 'yes';
+    for (const x of $('model-opt').querySelectorAll('button')) x.classList.toggle('on', x === b);
+    updateModel();
+  };
+}
+$('ratio').oninput = (e) => {
+  modelOpts.ratio = +e.target.value / 100;
+  $('ratio-val').textContent = `${e.target.value}%`;
+  clearTimeout(updateModel.t);
+  updateModel.t = setTimeout(updateModel, 200);
+};
+
+// Ver malla: líneas de la malla encima del modelo sólido
+const wireMat = new THREE.MeshBasicMaterial({
+  color: 0x6fa8ff, wireframe: true, transparent: true, opacity: 0.45, depthWrite: false,
+  polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+});
+function applyWire() {
+  const on = $('wire').checked;
+  view.traverse((o) => {
+    if (o.userData.wireOverlay) { o.visible = on; return; }
+    if (!on || !o.isMesh || o.userData.hasWire) return;
+    let w;
+    if (o.isSkinnedMesh) { w = new THREE.SkinnedMesh(o.geometry, wireMat); w.bind(o.skeleton, o.bindMatrix); }
+    else w = new THREE.Mesh(o.geometry, wireMat);
+    w.morphTargetInfluences = o.morphTargetInfluences;
+    w.userData.wireOverlay = true;
+    w.renderOrder = 1;
+    o.userData.hasWire = true;
+    o.add(w);
+  });
+}
+$('wire').onchange = applyWire;
+
+// Archivos del modelo según la optimización elegida
+function modelOutputs(res) {
+  return optimized ? writeModel(res.data, optimized, res.baseName) : res;
+}
+
 // ---------- Opción "Optimizar texturas" ----------
 function applyOptions() {
   const yes = $('optimize').querySelector('.on').dataset.v === 'yes';
@@ -426,8 +567,12 @@ async function readFiles(list) {
 }
 
 async function load(list) {
-  els.drop.hidden = true;
-  els.work.hidden = false;
+  $('panel-empty').hidden = true;
+  $('panel-body').hidden = false;
+  $('empty').hidden = true;
+  $('viewer-tools').hidden = false;
+  $('file-chip').hidden = false;
+  $('another').hidden = false;
   els.fname.textContent = '…';
   els.scale.value = 1;
   resize();
@@ -442,9 +587,13 @@ async function load(list) {
     current.scaleUsed = 1;
     resizeCache = new Map();
     await Promise.all(current.images.map(readDims));
+    setPreview(null);
     showScene(loaded.scene);
     renderInfo(current);
+    setViewerInfo(`${fmtInt(current.stats.triangles)} triángulos`);
+    await updateModel();
     setBusy(false);
+    dispatchEvent(new Event('model-loaded'));
   } catch (err) {
     console.error(err);
     current = null;
@@ -464,7 +613,8 @@ async function ensureScale() {
   if (scale === current.scaleUsed) return current;
   setStatus('Aplicando escala…');
   const res = await buildExport(loaded, { scale, imageTools });
-  Object.assign(current, { fbx: res.fbx, obj: res.obj, mtl: res.mtl, scaleUsed: scale });
+  Object.assign(current, { fbx: res.fbx, obj: res.obj, mtl: res.mtl, data: res.data, factor: res.factor, scaleUsed: scale });
+  if (modelOpts.on) await updateModel();
   return current;
 }
 
@@ -483,16 +633,22 @@ async function exportGLB() {
   const root = new THREE.Group();
   root.name = current.baseName;
   root.scale.setScalar((loaded.unitToCm / 100) * currentScale());
-  const scene = loaded.scene;
+  const scene = preview || loaded.scene; // con optimización: malla reducida (sin huesos)
+  const overlays = [];
+  scene.traverse((o) => { if (o.userData.wireOverlay) overlays.push(o); });
+  for (const o of overlays) o.parent.remove(o);
   view.remove(scene);
   root.add(scene);
   try {
     const maxTextureSize = texOpts.mode === 'pow2' ? texOpts.max
       : texOpts.mode === 'exact' ? Math.max(texOpts.w, texOpts.h) : Infinity;
-    return await new GLTFExporter().parseAsync(root, { binary: true, animations: loaded.animations, maxTextureSize });
+    const animations = preview ? [] : loaded.animations;
+    return await new GLTFExporter().parseAsync(root, { binary: true, animations, maxTextureSize });
   } finally {
     root.remove(scene);
     view.add(scene);
+    scene.traverse((o) => { o.userData.hasWire = false; });
+    applyWire();
   }
 }
 
@@ -505,16 +661,18 @@ async function processAll(res) {
   }
   return out;
 }
-const zipSuffix = () => (texOpts.quality === 'none' ? '' : '_optimizado') + sizeSuffix();
+const zipSuffix = () => (optimized ? `_${Math.round(modelOpts.ratio * 100)}pct` : '') + (texOpts.quality === 'none' ? '' : '_optimizado') + sizeSuffix();
 
 function modelFiles(res, tex) {
+  if (optimized) setStatus('Escribiendo modelo optimizado…');
+  const out = modelOutputs(res);
   if (outFmt === 'obj') {
     return [
-      [`${res.baseName}.obj`, res.obj],
-      [`${res.baseName}.mtl`, withFiles(res.mtl, tex, false)],
+      [`${res.baseName}.obj`, out.obj],
+      [`${res.baseName}.mtl`, withFiles(out.mtl, tex, false)],
     ];
   }
-  return [[`${res.baseName}.fbx`, withFiles(res.fbx, tex, true)]];
+  return [[`${res.baseName}.fbx`, withFiles(out.fbx, tex, true)]];
 }
 
 els.zip.onclick = () => run(async (res) => {
@@ -555,8 +713,8 @@ function accept(files) {
   else alert('Incluye un modelo: GLB, glTF, FBX, OBJ, DAE, STL o PLY (o un ZIP que lo contenga).');
 }
 els.pick.onclick = (e) => { e.stopPropagation(); els.file.click(); };
-els.drop.onclick = () => els.file.click();
-els.another.onclick = () => els.file.click();
+els.drop.onclick = (e) => { if (!e.target.closest('button')) els.file.click(); };
+els.another.onclick = (e) => { e.stopPropagation(); els.file.click(); };
 els.file.onchange = () => { if (els.file.files.length) accept(els.file.files); els.file.value = ''; };
 
 let depth = 0;
@@ -567,3 +725,16 @@ addEventListener('drop', (e) => {
   e.preventDefault(); depth = 0; els.drop.classList.remove('over');
   if (e.dataTransfer.files.length) accept(e.dataTransfer.files);
 });
+
+// Cargar un modelo desde una URL: ?src=https://.../modelo.glb
+const srcParam = new URLSearchParams(location.search).get('src');
+if (srcParam) {
+  (async () => {
+    try {
+      const res = await fetch(srcParam);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const name = decodeURIComponent(new URL(srcParam, location.href).pathname.split('/').pop()) || 'modelo.glb';
+      load([new File([await res.blob()], name)]);
+    } catch (err) { alert(`No se pudo cargar ${srcParam}: ${err.message || err}`); }
+  })();
+}
