@@ -20,11 +20,18 @@ npm run dev
 
 ## Publicación
 
-```bash
-npm run deploy
-```
+Cada push a `main` compila el proyecto y publica la web en GitHub Pages automáticamente.
 
-Compila el proyecto y publica `dist/` en [ATR-MODELFBX-APP](https://github.com/ATR-APPS/ATR-MODELFBX-APP), que sirve la web con GitHub Pages.
+## Contribuir
+
+Las mejoras son bienvenidas.
+
+1. Haz un fork del repositorio y crea una rama para tu cambio.
+2. Instala las dependencias con `npm install` y prueba con `npm run dev`.
+3. Comprueba que `npm run build` funciona.
+4. Abre un pull request explicando qué cambia y por qué.
+
+Para errores o ideas, abre un [issue](https://github.com/ATR-APPS/ATR-MODELFBX-APP/issues).
 
 ## Estructura
 
@@ -42,3 +49,7 @@ src/
 public/
   draco/               decodificador Draco
 ```
+
+## Licencia
+
+[MIT](LICENSE)
