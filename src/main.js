@@ -7,6 +7,7 @@ import {
   processTexture, resetTextureCache, relinkTextures,
 } from './textures/optimizer.js';
 import { Viewer, meshesToGroup } from './viewer/viewer.js';
+import { buildVoxelModel, writeBBModel, voxelPreview, maxDetail } from './export/voxel.js';
 import { createDropdown } from './ui/dropdown.js';
 import { showGithubStars } from './ui/github-stars.js';
 import { containsModel, readFiles, buildZip } from './files.js';
@@ -19,6 +20,7 @@ const FORMATS = {
   fbx: { main: 'download.fbx', model: 'download.fbxOnly' },
   obj: { main: 'download.obj', model: 'download.objOnly' },
   glb: { main: 'download.glb', model: null },
+  bbmodel: { main: 'download.bbmodel', model: null },
 };
 
 const downloadIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -53,12 +55,18 @@ const state = {
   reduced: null,
   reduction: null,
   thumbnails: [],
+  voxelRes: 16,
+  voxelDetail: 4,
+  voxelModel: null,
+  voxelGroup: null,
 };
 
 let modelJob = 0;
 let estimateJob = 0;
 let estimateTimer = 0;
 let ratioTimer = 0;
+let voxelJob = 0;
+let voxelTimer = 0;
 
 function setStatus(key) {
   ui.status.hidden = !key;
@@ -78,6 +86,11 @@ function renderViewerInfo() {
   const { result, reduction } = state;
   ui.viewerInfo.hidden = !result;
   if (!result) return;
+  if (state.format === 'bbmodel') {
+    ui.viewerInfo.textContent = state.voxelModel ? t('viewer.cubes', { count: formatInt(state.voxelModel.boxes.length) }) : '';
+    ui.viewerInfo.hidden = !state.voxelModel;
+    return;
+  }
   ui.viewerInfo.textContent = reduction
     ? t('viewer.optimized', { after: formatInt(reduction.after), before: formatInt(reduction.before) })
     : t('viewer.triangles', { count: formatInt(result.stats.triangles) });
@@ -226,8 +239,9 @@ async function updateReduction() {
   if (!state.reduce) {
     state.reduced = null;
     state.reduction = null;
-    viewer.setPreview(null);
+    refreshPreview();
     renderViewerInfo();
+    updateVoxels();
     return;
   }
 
@@ -237,12 +251,54 @@ async function updateReduction() {
     if (job !== modelJob) return;
     state.reduced = meshes;
     state.reduction = { before: result.stats.triangles, after: countTriangles(meshes) };
-    viewer.setPreview(meshesToGroup(meshes, result.threeMaterials, result.factor));
+    refreshPreview();
     renderReduction();
     renderViewerInfo();
+    updateVoxels();
   } catch (error) {
     console.error(error);
     ui.modelResult.textContent = t('model.failed', { message: describeError(error) });
+  }
+}
+
+function refreshPreview() {
+  const { result } = state;
+  if (!result) return;
+  if (state.format === 'bbmodel') viewer.setPreview(state.voxelGroup);
+  else viewer.setPreview(state.reduced ? meshesToGroup(state.reduced, result.threeMaterials, result.factor) : null);
+}
+
+function clearVoxels() {
+  voxelJob++;
+  state.voxelModel = null;
+  state.voxelGroup = null;
+}
+
+async function updateVoxels() {
+  const { result } = state;
+  if (!result || state.format !== 'bbmodel') return;
+  const job = ++voxelJob;
+  $('voxel-result').textContent = t('model.calculating');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  if (job !== voxelJob) return;
+  try {
+    const model = await buildVoxelModel(result, state.reduced || result.data.meshes, {
+      resolution: state.voxelRes,
+      detail: state.voxelDetail,
+    });
+    if (job !== voxelJob || !model) return;
+    state.voxelModel = model;
+    state.voxelGroup = voxelPreview(model, result.factor);
+    $('voxel-result').innerHTML = t('voxel.result', {
+      count: formatInt(model.boxes.length),
+      width: model.width,
+      height: model.height,
+    });
+    refreshPreview();
+    renderViewerInfo();
+  } catch (error) {
+    console.error(error);
+    $('voxel-result').textContent = t('model.failed', { message: describeError(error) });
   }
 }
 
@@ -274,6 +330,8 @@ async function load(list) {
 
     state.result = await buildExport(state.input, { imageTools, onStatus: setStatus });
     state.reduction = null;
+    state.reduced = null;
+    clearVoxels();
     resetTextureCache();
     await Promise.all(state.result.images.map(readImageSize));
 
@@ -340,6 +398,14 @@ async function run(task) {
 }
 
 async function downloadAll(result) {
+  if (state.format === 'bbmodel') {
+    if (!state.voxelModel) await updateVoxels();
+    if (!state.voxelModel) return;
+    setStatus('status.creatingBBModel');
+    const json = await writeBBModel(state.voxelModel, result.baseName);
+    download(json, `${result.baseName}_voxel${state.voxelRes}.bbmodel`, 'application/json');
+    return;
+  }
   if (state.format === 'glb') {
     setStatus('status.creatingGlb');
     const glb = await viewer.exportGLB({
@@ -386,6 +452,7 @@ function renderFormat() {
   ui.downloadMain.textContent = t(main);
   ui.downloadModel.textContent = model ? t(model) : '';
   ui.downloadModel.hidden = !model;
+  $('voxel-opts').hidden = state.format !== 'bbmodel';
 }
 
 function renderLanguage() {
@@ -436,6 +503,32 @@ $('ratio').oninput = (event) => {
   ratioTimer = setTimeout(updateReduction, 200);
 };
 
+$('voxel-res').oninput = (event) => {
+  state.voxelRes = Number(event.target.value);
+  $('voxel-res-val').textContent = event.target.value;
+  renderVoxelDetail();
+  clearTimeout(voxelTimer);
+  voxelTimer = setTimeout(updateVoxels, 250);
+};
+
+function renderVoxelDetail() {
+  const limit = maxDetail(state.voxelRes);
+  for (const button of $('voxel-detail').querySelectorAll('button')) {
+    const value = Number(button.dataset.px);
+    button.disabled = value > limit;
+    button.classList.toggle('on', value === Math.min(state.voxelDetail, limit));
+  }
+}
+
+for (const button of $('voxel-detail').querySelectorAll('button')) {
+  button.onclick = () => {
+    state.voxelDetail = Number(button.dataset.px);
+    renderVoxelDetail();
+    updateVoxels();
+  };
+}
+renderVoxelDetail();
+
 $('tex-toggle').onchange = applyTextureOptions;
 $('size-sel').onchange = applyTextureOptions;
 $('exact-w').oninput = (event) => {
@@ -451,6 +544,9 @@ for (const button of $('out-fmt').querySelectorAll('button')) {
   button.onclick = () => {
     state.format = button.dataset.f;
     renderFormat();
+    if (state.format === 'bbmodel' && !state.voxelModel) updateVoxels();
+    else refreshPreview();
+    renderViewerInfo();
   };
 }
 

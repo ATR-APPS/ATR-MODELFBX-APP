@@ -118,6 +118,23 @@
             <button data-f="fbx" class="on">FBX</button>
             <button data-f="obj">OBJ</button>
             <button data-f="glb">GLB</button>
+            <button data-f="bbmodel" data-i18n-title="voxel.title">Blockbench</button>
+          </div>
+          <div id="voxel-opts" class="row-sub" hidden>
+            <div class="row"><span data-i18n="voxel.resolution"></span></div>
+            <div class="slider-row">
+              <input id="voxel-res" type="range" min="4" max="64" step="2" value="16" data-i18n-label="voxel.resolution">
+              <span id="voxel-res-val" class="ratio-val">16</span>
+            </div>
+            <div class="row"><span data-i18n="voxel.detail"></span></div>
+            <div class="seg five" id="voxel-detail" role="radiogroup">
+              <button data-px="1">1</button>
+              <button data-px="2">2</button>
+              <button data-px="4" class="on">4</button>
+              <button data-px="8">8</button>
+              <button data-px="16">16</button>
+            </div>
+            <p id="voxel-result" class="result"></p>
           </div>
           <div class="actions">
             <button id="dl-zip" class="btn primary"></button>
