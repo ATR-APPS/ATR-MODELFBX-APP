@@ -84,6 +84,11 @@ function rasterize(meshes, samplers, grid) {
   const coarse = new Float32Array(nx * ny * nz * 4);
   const fineSlots = new Map();
   let fineSums = new Float32Array(4 * 65536);
+  // Every sample is kept (linked list per fine voxel) so the dominant colour can be voted later.
+  let heads = new Int32Array(65536).fill(-1);
+  let samples = new Uint32Array(1 << 20);
+  let next = new Int32Array(1 << 20);
+  let sampleCount = 0;
   const out = [0, 0, 0, 0];
 
   for (const mesh of meshes) {
@@ -121,18 +126,137 @@ function rasterize(meshes, samplers, grid) {
             slot = fineSlots.size;
             fineSlots.set(key, slot);
             if (slot * 4 >= fineSums.length) {
-              const grown = new Float32Array(fineSums.length * 2);
-              grown.set(fineSums);
-              fineSums = grown;
+              fineSums = grow(fineSums, fineSums.length * 2);
+              heads = grow(heads, heads.length * 2, -1);
             }
           }
           const fk = slot * 4;
           fineSums[fk] += out[0]; fineSums[fk + 1] += out[1]; fineSums[fk + 2] += out[2]; fineSums[fk + 3] += 1;
+
+          if (sampleCount === samples.length) {
+            samples = grow(samples, samples.length * 2);
+            next = grow(next, next.length * 2);
+          }
+          samples[sampleCount] = (Math.round(out[0]) << 16) | (Math.round(out[1]) << 8) | Math.round(out[2]);
+          next[sampleCount] = heads[slot];
+          heads[slot] = sampleCount++;
         }
       }
     }
   }
-  return { coarse, fineSlots, fineSums, fnx, fny, fnz };
+  return { coarse, fineSlots, fineSums, heads, samples, next, fnx, fny, fnz };
+}
+
+function grow(array, length, fill) {
+  const grown = new array.constructor(length);
+  if (fill !== undefined) grown.fill(fill);
+  grown.set(array);
+  return grown;
+}
+
+// ---- Colours: palette (median cut) and dominant colour per texture pixel ----
+
+function medianCut(colors, weights, count) {
+  let boxes = [{ items: colors.map((c, i) => i) }];
+  const channel = (i, ch) => colors[i][ch];
+  const describe = (box) => {
+    let best = 0, range = -1, weight = 0;
+    for (let ch = 0; ch < 3; ch++) {
+      let lo = 255, hi = 0;
+      for (const i of box.items) { lo = Math.min(lo, channel(i, ch)); hi = Math.max(hi, channel(i, ch)); }
+      if (hi - lo > range) { range = hi - lo; best = ch; }
+    }
+    for (const i of box.items) weight += weights[i];
+    box.channel = best;
+    box.score = range * Math.sqrt(weight);
+  };
+  describe(boxes[0]);
+
+  while (boxes.length < count) {
+    const box = boxes.reduce((a, b) => (b.score > a.score ? b : a));
+    if (box.score <= 0 || box.items.length < 2) break;
+    const ch = box.channel;
+    box.items.sort((a, b) => channel(a, ch) - channel(b, ch));
+    const half = box.items.reduce((s, i) => s + weights[i], 0) / 2;
+    let acc = 0, cut = 1;
+    for (; cut < box.items.length - 1; cut++) {
+      acc += weights[box.items[cut - 1]];
+      if (acc >= half) break;
+    }
+    const a = { items: box.items.slice(0, cut) }, b = { items: box.items.slice(cut) };
+    describe(a); describe(b);
+    boxes = boxes.filter((x) => x !== box).concat(a, b);
+  }
+
+  return boxes.map((box) => {
+    const sum = [0, 0, 0];
+    let w = 0;
+    for (const i of box.items) {
+      for (let ch = 0; ch < 3; ch++) sum[ch] += colors[i][ch] * weights[i];
+      w += weights[i];
+    }
+    return sum.map((s) => Math.round(s / (w || 1)));
+  });
+}
+
+// Lookup table from a 15-bit colour to the nearest palette entry.
+function paletteLookup(palette) {
+  const table = new Uint8Array(32768);
+  for (let key = 0; key < 32768; key++) {
+    const r = ((key >> 10) << 3) + 4, g = (((key >> 5) & 31) << 3) + 4, b = ((key & 31) << 3) + 4;
+    let best = 0, bestDist = Infinity;
+    for (let i = 0; i < palette.length; i++) {
+      const p = palette[i];
+      // Weighted distance: the eye is more sensitive to green.
+      const d = 2 * (r - p[0]) ** 2 + 4 * (g - p[1]) ** 2 + 3 * (b - p[2]) ** 2;
+      if (d < bestDist) { bestDist = d; best = i; }
+    }
+    table[key] = best;
+  }
+  return (rgb) => table[((rgb >> 19) << 10) | (((rgb >> 11) & 31) << 5) | ((rgb >> 3) & 31)];
+}
+
+const unpack = (rgb) => [(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255];
+
+function resolveColors(raster, paletteSize) {
+  const { fineSlots, fineSums, heads, samples, next } = raster;
+  const slots = fineSlots.size;
+  const averages = new Array(slots);
+  const weights = new Array(slots);
+  for (let s = 0; s < slots; s++) {
+    const n = fineSums[s * 4 + 3];
+    averages[s] = [fineSums[s * 4] / n, fineSums[s * 4 + 1] / n, fineSums[s * 4 + 2] / n];
+    weights[s] = n;
+  }
+
+  const palette = paletteSize ? medianCut(averages, weights, paletteSize) : null;
+  const nearest = palette && paletteLookup(palette);
+  // Without a palette, samples vote on coarse 4-bit-per-channel bins.
+  const bin = nearest || ((rgb) => ((rgb >> 20) << 8) | (((rgb >> 12) & 15) << 4) | ((rgb >> 4) & 15));
+
+  const fine = new Uint8Array(slots * 3);
+  const votes = new Map();
+  for (let s = 0; s < slots; s++) {
+    votes.clear();
+    for (let i = heads[s]; i !== -1; i = next[i]) {
+      const key = bin(samples[i]);
+      const entry = votes.get(key);
+      if (entry) { entry.n++; entry.rgb.push(samples[i]); } else votes.set(key, { n: 1, rgb: [samples[i]] });
+    }
+    let winner = null, winnerKey = 0;
+    for (const [key, entry] of votes) if (!winner || entry.n > winner.n) { winner = entry; winnerKey = key; }
+    let color;
+    if (palette) color = palette[winnerKey];
+    else {
+      color = [0, 0, 0];
+      for (const rgb of winner.rgb) { const c = unpack(rgb); color[0] += c[0]; color[1] += c[1]; color[2] += c[2]; }
+      color = color.map((c) => c / winner.rgb.length);
+    }
+    fine[s * 3] = color[0]; fine[s * 3 + 1] = color[1]; fine[s * 3 + 2] = color[2];
+  }
+
+  const snap = (r, g, b) => (palette ? palette[nearest((r << 16) | (g << 8) | b)] : [r, g, b]);
+  return { fine, snap };
 }
 
 function sample({ tint, pixels, cutout }, uvs, flipV, a, b, c, w, u, v, out) {
@@ -180,6 +304,69 @@ function findOutside(solid, { nx, ny, nz }) {
     }
   }
   return outside;
+}
+
+// ---- Silhouette cleanup ----
+
+// Drops small 26-connected islands (stray cubes floating around the model).
+function removeIslands(solid, { nx, ny, nz }) {
+  const label = new Int32Array(solid.length).fill(-1);
+  const sizes = [];
+  const stack = [];
+  for (let start = 0; start < solid.length; start++) {
+    if (!solid[start] || label[start] !== -1) continue;
+    const id = sizes.length;
+    let size = 0;
+    label[start] = id;
+    stack.push(start);
+    while (stack.length) {
+      const i = stack.pop();
+      size++;
+      const x = i % nx, z = Math.floor(i / nx) % nz, y = Math.floor(i / (nx * nz));
+      for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+        const X = x + dx, Y = y + dy, Z = z + dz;
+        if (X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz) continue;
+        const j = (Y * nz + Z) * nx + X;
+        if (solid[j] && label[j] === -1) { label[j] = id; stack.push(j); }
+      }
+    }
+    sizes.push(size);
+  }
+  const largest = Math.max(0, ...sizes);
+  const minimum = Math.max(3, largest * 0.01);
+  for (let i = 0; i < solid.length; i++) if (solid[i] && sizes[label[i]] < minimum) solid[i] = 0;
+}
+
+// Two cubes that only touch along an edge leave a see-through crack: fill one of the two gap cells.
+// Also fills single empty cells sandwiched between cubes on two axes (pinholes).
+function closeGaps(solid, { nx, ny, nz }) {
+  const at = (x, y, z) => (y * nz + z) * nx + x;
+  const filled = (x, y, z) => x >= 0 && y >= 0 && z >= 0 && x < nx && y < ny && z < nz && solid[at(x, y, z)] === 1;
+  const added = [];
+  const add = (x, y, z) => { const i = at(x, y, z); if (!solid[i]) { solid[i] = 2; added.push(i); } };
+  const solidCount = (x, y, z) => NEIGHBORS.reduce((s, [dx, dy, dz]) => s + (filled(x + dx, y + dy, z + dz) ? 1 : 0), 0);
+  const edges = [[1, 1, 0], [1, -1, 0], [1, 0, 1], [1, 0, -1], [0, 1, 1], [0, 1, -1]];
+
+  for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
+    if (solid[at(x, y, z)] !== 1) continue;
+    for (const [dx, dy, dz] of edges) {
+      if (!filled(x + dx, y + dy, z + dz)) continue;
+      // The two cells that share a face with both cubes: move along only one of the two axes.
+      const a = dx ? [x + dx, y, z] : [x, y + dy, z];
+      const b = dz ? [x, y, z + dz] : [x, y + dy, z];
+      if (solid[at(...a)] || solid[at(...b)]) continue;
+      if (solidCount(...a) >= solidCount(...b)) add(...a); else add(...b);
+    }
+  }
+
+  for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
+    if (solid[at(x, y, z)]) continue;
+    const pairs = (filled(x - 1, y, z) && filled(x + 1, y, z)) + (filled(x, y - 1, z) && filled(x, y + 1, z)) + (filled(x, y, z - 1) && filled(x, y, z + 1));
+    if (pairs >= 2) add(x, y, z);
+  }
+
+  for (const i of added) solid[i] = 1;
+  return added;
 }
 
 // Greedy merge of solid voxels into boxes: grow along X, then Z, then Y.
@@ -272,9 +459,9 @@ function packRects(rects, detail) {
 }
 
 // Each texture pixel shows the outermost painted fine voxel behind it; if none, the cube's average colour.
-function paintAtlas(rects, grid, raster, colors, width, height) {
+function paintAtlas(rects, grid, raster, fineColors, colors, width, height) {
   const { nx, nz, detail } = grid;
-  const { fineSlots, fineSums, fnx, fnz } = raster;
+  const { fineSlots, fnx, fnz } = raster;
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
   const image = ctx.createImageData(width, height);
@@ -295,8 +482,8 @@ function paintAtlas(rects, grid, raster, colors, width, height) {
         }
         const k = ((rect.y + pv) * width + rect.x + pu) * 4;
         if (slot !== undefined) {
-          const s = slot * 4, n = fineSums[s + 3];
-          px[k] = fineSums[s] / n; px[k + 1] = fineSums[s + 1] / n; px[k + 2] = fineSums[s + 2] / n;
+          const s = slot * 3;
+          px[k] = fineColors[s]; px[k + 1] = fineColors[s + 1]; px[k + 2] = fineColors[s + 2];
         } else {
           const c = p.map(Math.floor);
           c[axis] = sign > 0 ? p[axis] - 1 : p[axis];
@@ -311,7 +498,7 @@ function paintAtlas(rects, grid, raster, colors, width, height) {
   return canvas;
 }
 
-export async function buildVoxelModel(result, meshes, { resolution, detail }) {
+export async function buildVoxelModel(result, meshes, { resolution, detail, palette = 0, cleanup = true }) {
   const box = new THREE.Box3();
   const point = new THREE.Vector3();
   for (const mesh of meshes) {
@@ -328,23 +515,48 @@ export async function buildVoxelModel(result, meshes, { resolution, detail }) {
   const grid = { size, detail, origin: box.min.clone(), nx, ny, nz };
 
   const raster = rasterize(meshes, await materialSamplers(result), grid);
+  const { fine: fineColors, snap } = resolveColors(raster, palette);
   const total = nx * ny * nz;
   const solid = new Uint8Array(total);
-  const colors = new Uint8Array(total * 3);
+  const average = new Float32Array(total * 3);
   for (let i = 0; i < total; i++) {
     const n = raster.coarse[i * 4 + 3];
     if (!n) continue;
     solid[i] = 1;
-    colors[i * 3] = raster.coarse[i * 4] / n;
-    colors[i * 3 + 1] = raster.coarse[i * 4 + 1] / n;
-    colors[i * 3 + 2] = raster.coarse[i * 4 + 2] / n;
+    for (let ch = 0; ch < 3; ch++) average[i * 3 + ch] = raster.coarse[i * 4 + ch] / n;
+  }
+
+  if (cleanup) {
+    removeIslands(solid, grid);
+    // New cubes have no samples: give them the average of their painted neighbours.
+    for (const i of closeGaps(solid, grid)) {
+      const x = i % nx, z = Math.floor(i / nx) % nz, y = Math.floor(i / (nx * nz));
+      const sum = [0, 0, 0];
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+        const X = x + dx, Y = y + dy, Z = z + dz;
+        if (X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz) continue;
+        const j = (Y * nz + Z) * nx + X;
+        if (!raster.coarse[j * 4 + 3]) continue;
+        for (let ch = 0; ch < 3; ch++) sum[ch] += average[j * 3 + ch];
+        n++;
+      }
+      if (n) for (let ch = 0; ch < 3; ch++) average[i * 3 + ch] = sum[ch] / n;
+    }
+  }
+
+  const colors = new Uint8Array(total * 3);
+  for (let i = 0; i < total; i++) {
+    if (!solid[i]) continue;
+    const c = snap(Math.round(average[i * 3]), Math.round(average[i * 3 + 1]), Math.round(average[i * 3 + 2]));
+    colors[i * 3] = c[0]; colors[i * 3 + 1] = c[1]; colors[i * 3 + 2] = c[2];
   }
 
   const outside = findOutside(solid, grid);
   const boxes = mergeBoxes(solid, grid);
   const rects = planFaces(boxes, outside, grid);
   const { width, height } = packRects(rects, detail);
-  const atlas = paintAtlas(rects, grid, raster, colors, width, height);
+  const atlas = paintAtlas(rects, grid, raster, fineColors, colors, width, height);
   return { grid, boxes, rects, atlas, width, height };
 }
 
@@ -443,13 +655,16 @@ export function voxelPreview(model, scale) {
   const { grid, rects, atlas, width, height } = model;
   const { size, detail, origin } = grid;
   const inverse = 1 / scale;
-  const positions = [], normals = [], uvs = [], indices = [];
+  const positions = [], normals = [], uvs = [], shades = [], indices = [];
   const corners = [[0, 0], [1, 0], [1, 1], [0, 1]];
+  // Minecraft-style flat shading per face direction (sRGB brightness converted to linear).
+  const brightness = { up: 1, down: 0.5, north: 0.8, south: 0.8, east: 0.6, west: 0.6 };
 
   for (const rect of rects) {
     const face = FACES[rect.name];
     const normal = [0, 0, 0];
     normal[face.axis] = face.sign;
+    const shade = new THREE.Color().setRGB(brightness[rect.name], brightness[rect.name], brightness[rect.name], THREE.SRGBColorSpace);
     const base = positions.length / 3;
     for (const [cu, cv] of corners) {
       const p = face.point(rect.box, cu * rect.w, cv * rect.h);
@@ -459,6 +674,7 @@ export function voxelPreview(model, scale) {
         (origin.z + p[2] * size) * inverse,
       );
       normals.push(...normal);
+      shades.push(shade.r, shade.g, shade.b);
       uvs.push((rect.x + cu * rect.w * detail) / width, 1 - (rect.y + cv * rect.h * detail) / height);
     }
     indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -468,6 +684,7 @@ export function voxelPreview(model, scale) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(shades, 3));
   geometry.setIndex(indices);
 
   const texture = new THREE.CanvasTexture(atlas);
@@ -475,7 +692,7 @@ export function voxelPreview(model, scale) {
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.NearestFilter;
   texture.generateMipmaps = false;
-  const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.9, side: THREE.DoubleSide });
+  const material = new THREE.MeshBasicMaterial({ map: texture, vertexColors: true, toneMapped: false, side: THREE.DoubleSide });
 
   const group = new THREE.Group();
   group.add(new THREE.Mesh(geometry, material));

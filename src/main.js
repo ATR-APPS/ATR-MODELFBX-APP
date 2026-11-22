@@ -57,6 +57,8 @@ const state = {
   thumbnails: [],
   voxelRes: 16,
   voxelDetail: 4,
+  voxelPalette: 16,
+  voxelCleanup: true,
   voxelModel: null,
   voxelGroup: null,
 };
@@ -285,6 +287,8 @@ async function updateVoxels() {
     const model = await buildVoxelModel(result, state.reduced || result.data.meshes, {
       resolution: state.voxelRes,
       detail: state.voxelDetail,
+      palette: state.voxelPalette,
+      cleanup: state.voxelCleanup,
     });
     if (job !== voxelJob || !model) return;
     state.voxelModel = model;
@@ -528,6 +532,18 @@ for (const button of $('voxel-detail').querySelectorAll('button')) {
   };
 }
 renderVoxelDetail();
+
+for (const button of $('voxel-palette').querySelectorAll('button')) {
+  button.onclick = () => {
+    state.voxelPalette = Number(button.dataset.colors);
+    for (const other of $('voxel-palette').querySelectorAll('button')) other.classList.toggle('on', other === button);
+    updateVoxels();
+  };
+}
+$('voxel-cleanup').onchange = (event) => {
+  state.voxelCleanup = event.target.checked;
+  updateVoxels();
+};
 
 $('tex-toggle').onchange = applyTextureOptions;
 $('size-sel').onchange = applyTextureOptions;
